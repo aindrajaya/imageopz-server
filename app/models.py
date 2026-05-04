@@ -3,7 +3,7 @@ SQLAlchemy database models for ImageOpz.
 Uses SQLite with WAL mode to prevent database locked errors.
 """
 
-from sqlalchemy import Column, String, Integer, Boolean, DateTime, Float, Text, Enum, Index, create_engine
+from sqlalchemy import Column, String, Integer, Boolean, DateTime, Float, Text, Enum, Index, create_engine, ForeignKey, UniqueConstraint
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime, timedelta
@@ -23,16 +23,46 @@ class JobStatus(str, enum.Enum):
     FAILED = "failed"
 
 
+class OrderProvider(str, enum.Enum):
+    LEMONSQUEEZY = "lemonsqueezy"
+
+
+class OrderStatus(str, enum.Enum):
+    CREATED = "created"
+    PAID = "paid"
+    REFUNDED = "refunded"
+    CANCELLED = "cancelled"
+    UNKNOWN = "unknown"
+
+
+class User(Base):
+    """
+    Minimal user record for MVP.
+    We currently identify paid users by email coming from the payment provider.
+    """
+    __tablename__ = "users"
+
+    id = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    email = Column(String(320), unique=True, index=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        Index("idx_user_email", "email"),
+    )
+
+
 class UsersQuota(Base):
     """
     Tracks quota usage for free tier users.
-    Users are identified by IP hash or session ID.
+    Users are identified by IP hash (free tier) and/or linked to a user record (paid tier).
     """
     __tablename__ = "users_quota"
 
     id = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
-    ip_hash = Column(String(255), unique=True, index=True)
-    session_id = Column(String(255), unique=True, index=True, nullable=True)
+    user_id = Column(String(64), ForeignKey("users.id"), nullable=True, index=True)
+    ip_hash = Column(String(255), index=True, nullable=True)
+    session_id = Column(String(255), index=True, nullable=True)
     credits_used = Column(Integer, default=0)
     is_pro = Column(Boolean, default=False)
     pro_expiry_date = Column(DateTime, nullable=True)
@@ -42,6 +72,35 @@ class UsersQuota(Base):
     __table_args__ = (
         Index("idx_ip_hash", "ip_hash"),
         Index("idx_session_id", "session_id"),
+        Index("idx_user_id", "user_id"),
+    )
+
+
+class Order(Base):
+    """
+    Stores payment-provider order/subscription events for support + idempotency.
+    """
+    __tablename__ = "orders"
+
+    id = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    provider = Column(String(32), index=True, nullable=False)  # e.g. 'lemonsqueezy'
+    external_id = Column(String(128), index=True, nullable=False)  # provider order id
+    event_name = Column(String(64), nullable=True)
+
+    user_id = Column(String(64), ForeignKey("users.id"), nullable=True, index=True)
+    email = Column(String(320), index=True, nullable=True)
+
+    status = Column(String(32), default=OrderStatus.UNKNOWN.value, index=True)
+    raw_payload_json = Column(Text, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("provider", "external_id", name="uq_orders_provider_external_id"),
+        Index("idx_orders_provider_external_id", "provider", "external_id"),
+        Index("idx_orders_user_id", "user_id"),
+        Index("idx_orders_email", "email"),
     )
 
 
@@ -110,6 +169,7 @@ class Database:
             with self.engine.connect() as conn:
                 conn.exec_driver_sql("PRAGMA journal_mode=WAL;")
                 conn.exec_driver_sql("PRAGMA synchronous=NORMAL;")
+                conn.exec_driver_sql("PRAGMA foreign_keys=ON;")
                 conn.commit()
         
         # Create session factory
