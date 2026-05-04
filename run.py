@@ -84,7 +84,8 @@ Starting server...
         workers=args.workers,
         reload=args.reload,
         log_level="debug" if settings.debug else "info",
-        access_log=True
+        access_log=True,
+        proxy_headers=settings.proxy_headers,
     )
 
 
