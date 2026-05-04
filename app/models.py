@@ -69,6 +69,9 @@ class Job(Base):
     # Storage
     r2_url = Column(String(512), nullable=True)
     r2_object_key = Column(String(255), nullable=True, unique=True)
+
+    # Temp upload path (local disk, removed after processing)
+    upload_path = Column(String(512), nullable=True)
     
     # Processing info
     quality_setting = Column(Integer)  # 50 for free, 75 for pro
@@ -105,8 +108,8 @@ class Database:
         # Enable WAL mode for SQLite to prevent locked database errors
         if "sqlite" in settings.database_url:
             with self.engine.connect() as conn:
-                conn.execute("PRAGMA journal_mode=WAL;")
-                conn.execute("PRAGMA synchronous=NORMAL;")
+                conn.exec_driver_sql("PRAGMA journal_mode=WAL;")
+                conn.exec_driver_sql("PRAGMA synchronous=NORMAL;")
                 conn.commit()
         
         # Create session factory
@@ -132,6 +135,8 @@ db = Database()
 
 def get_db():
     """Dependency for FastAPI to inject database session"""
+    if db.SessionLocal is None:
+        db.init_db()
     db_session = db.SessionLocal()
     try:
         yield db_session
