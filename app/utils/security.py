@@ -5,7 +5,6 @@ Implements EXIF stripping, magic number validation, and quota management.
 
 import hashlib
 import hmac
-import magic
 from datetime import datetime, timedelta
 from typing import Tuple, Optional
 from fastapi import HTTPException, status
@@ -47,6 +46,21 @@ class SecurityValidator:
                     return True, mime_type
         
         return False, "Invalid or unsupported image format"
+
+    @staticmethod
+    def sniff_mime_type(file_data: bytes) -> Optional[str]:
+        """
+        Best-effort MIME sniffing using python-magic when available.
+        Falls back to signature-based detection.
+        """
+        try:
+            import magic  # type: ignore
+
+            mime = magic.from_buffer(file_data, mime=True)
+            return mime
+        except Exception:
+            valid, mime_or_error = SecurityValidator.validate_magic_number(file_data)
+            return mime_or_error if valid else None
     
     @staticmethod
     def strip_exif_and_metadata(file_data: bytes) -> bytes:
@@ -70,6 +84,28 @@ class SecurityValidator:
             image_without_exif.save(output, format=fmt)
             output.seek(0)
             
+            return output.getvalue()
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Failed to process image: {str(e)}"
+            )
+
+    @staticmethod
+    def strip_exif_and_metadata_path(file_path: str) -> bytes:
+        """
+        Remove EXIF/metadata from an image stored on disk.
+        """
+        try:
+            img = Image.open(file_path)
+            data = list(img.getdata())
+            image_without_exif = Image.new(img.mode, img.size)
+            image_without_exif.putdata(data)
+
+            output = io.BytesIO()
+            fmt = img.format or "JPEG"
+            image_without_exif.save(output, format=fmt)
+            output.seek(0)
             return output.getvalue()
         except Exception as e:
             raise HTTPException(
@@ -100,6 +136,28 @@ class SecurityValidator:
                 detail="Cannot identify image format"
             )
 
+    @staticmethod
+    def validate_decompression_bomb_protection_path(file_path: str) -> bool:
+        """
+        Validate image won't cause OOM when decompressed (path-based).
+        """
+        try:
+            img = Image.open(file_path)
+            total_pixels = img.width * img.height
+
+            if total_pixels > settings.max_image_pixels:
+                raise HTTPException(
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    detail=f"Image dimensions too large: {total_pixels:,} pixels exceeds limit of {settings.max_image_pixels:,}"
+                )
+
+            return True
+        except Image.UnidentifiedImageError:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Cannot identify image format"
+            )
+
 
 class QuotaManager:
     """Manages quota tracking and enforcement for free and pro tiers"""
@@ -113,7 +171,8 @@ class QuotaManager:
     def validate_free_tier_quota(
         file_size: int,
         files_count: int,
-        credits_used: int
+        credits_used: int,
+        credits_requested: int = 1,
     ) -> Tuple[bool, Optional[str]]:
         """
         Validate free tier constraints:
@@ -127,8 +186,11 @@ class QuotaManager:
         if files_count > settings.free_tier_max_bulk_images:
             return False, f"Maximum {settings.free_tier_max_bulk_images} files per request for free tier"
         
-        if credits_used >= settings.free_tier_max_credits:
-            return False, f"Free tier quota exceeded. Maximum {settings.free_tier_max_credits} credits allowed"
+        if credits_used + credits_requested > settings.free_tier_max_credits:
+            return (
+                False,
+                f"Free tier quota exceeded. Maximum {settings.free_tier_max_credits} credits allowed"
+            )
         
         return True, None
     
@@ -160,9 +222,12 @@ class JWTHandler:
     """JWT token generation and validation for pro tier"""
     
     @staticmethod
-    def generate_token(user_id: str, pro_days: int = 30) -> str:
+    def generate_token(user_id: str, pro_days: int = None) -> str:
         """Generate JWT token for pro tier access"""
         import jwt
+
+        if pro_days is None:
+            pro_days = settings.pro_tier_expiry_days
         
         payload = {
             "sub": user_id,
