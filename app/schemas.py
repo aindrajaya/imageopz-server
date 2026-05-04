@@ -95,6 +95,10 @@ class JobStatusResponse(BaseModel):
     
     # Download info (available when status is 'done')
     r2_url: Optional[str] = Field(None, description="Cloudflare R2 download URL")
+
+    # Optional realtime progress (when Redis available)
+    progress: Optional[float] = Field(None, description="Progress percentage (0-100)")
+    progress_status: Optional[str] = Field(None, description="Progress status message")
     
     # Error handling
     error_message: Optional[str] = Field(None, description="Error details if status is 'failed'")
