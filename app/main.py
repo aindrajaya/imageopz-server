@@ -14,7 +14,6 @@ import logging
 from app.config import settings
 from app.models import db
 from app.routes import optimization, health
-from app.workers.cleanup_scheduler import cleanup_scheduler
 
 # Configure logging
 logging.basicConfig(
@@ -36,19 +35,13 @@ async def lifespan(app: FastAPI):
     # Initialize database
     db.init_db()
     logger.info("Database initialized")
-    
-    # Start cleanup scheduler
-    cleanup_scheduler.start()
-    logger.info("Cleanup scheduler started")
-    
+
     logger.info("ImageOpz Backend Service ready")
     
     yield
     
     # Shutdown
     logger.info("Shutting down ImageOpz Backend Service")
-    cleanup_scheduler.stop()
-    logger.info("Cleanup scheduler stopped")
     logger.info("ImageOpz Backend Service stopped")
 
 
@@ -69,8 +62,8 @@ def create_app() -> FastAPI:
     # Add CORS middleware
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"] if settings.debug else ["https://imageopz.com"],
-        allow_credentials=True,
+        allow_origins=settings.cors_allow_origins_list(),
+        allow_credentials=settings.cors_allow_credentials,
         allow_methods=["*"],
         allow_headers=["*"],
     )
