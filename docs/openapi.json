@@ -1,0 +1,541 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "ImageOpz Backend API",
+    "description": "High-performance image optimization service with AVIF support",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "summary": "Health Check",
+        "description": "Check service health and dependencies.\nReturns status of API, database, and Redis connections.",
+        "operationId": "health_check_health_get",
+        "responses": {
+          "200": {
+            "description": "Service is healthy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthCheckResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/version": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "summary": "Get Version",
+        "description": "Get API version",
+        "operationId": "get_version_version_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/optimize": {
+      "post": {
+        "tags": [
+          "optimization"
+        ],
+        "summary": "Optimize Images",
+        "description": "Optimize multiple images and queue for processing.\nSupports both free and pro tier with respective quotas.\n\n**Free Tier:**\n- Max 3 images per request\n- Max 10MB per image\n- Max 3 credits total\n- 7 day expiry\n\n**Pro Tier:**\n- Max 30 images per request\n- Max 50MB per image\n- Unlimited credits (with active subscription)\n- 40 day expiry",
+        "operationId": "optimize_images_api_v1_optimize_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_optimize_images_api_v1_optimize_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Images queued for optimization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkOptimizeResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "File too large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Quota exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/status/{job_id}": {
+      "get": {
+        "tags": [
+          "optimization"
+        ],
+        "summary": "Get Job Status",
+        "description": "Poll job status and get optimization results.\nReturns current status, file sizes, compression ratio, and download URL.",
+        "operationId": "get_job_status_api_v1_status__job_id__get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job status retrieved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobStatusResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Job not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/webhooks/lemonsqueezy": {
+      "post": {
+        "tags": [
+          "optimization"
+        ],
+        "summary": "Handle Lemonsqueezy Webhook",
+        "description": "Handle LemonSqueezy payment webhooks.\nActivates pro tier for users after successful payment.",
+        "operationId": "handle_lemonsqueezy_webhook_api_v1_webhooks_lemonsqueezy_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/": {
+      "get": {
+        "summary": "Root",
+        "description": "API root endpoint",
+        "operationId": "root__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Body_optimize_images_api_v1_optimize_post": {
+        "properties": {
+          "images": {
+            "items": {
+              "type": "string",
+              "format": "binary"
+            },
+            "type": "array",
+            "title": "Images"
+          },
+          "auth_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auth Token"
+          }
+        },
+        "type": "object",
+        "required": [
+          "images"
+        ],
+        "title": "Body_optimize_images_api_v1_optimize_post"
+      },
+      "BulkOptimizeResponse": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success",
+            "description": "Whether all images were queued",
+            "default": true
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/OptimizationResultResponse"
+            },
+            "type": "array",
+            "title": "Results",
+            "description": "Array of job results for each image"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "description": "Informational message about the request"
+          }
+        },
+        "type": "object",
+        "required": [
+          "results",
+          "message"
+        ],
+        "title": "BulkOptimizeResponse",
+        "description": "Response for bulk optimization request"
+      },
+      "ErrorResponse": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success",
+            "default": false
+          },
+          "error": {
+            "type": "string",
+            "title": "Error",
+            "description": "Error type/code"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "description": "Human-readable error message"
+          },
+          "details": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Details",
+            "description": "Additional error details"
+          }
+        },
+        "type": "object",
+        "required": [
+          "error",
+          "message"
+        ],
+        "title": "ErrorResponse",
+        "description": "Standard error response"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "HealthCheckResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "description": "Service status",
+            "default": "healthy"
+          },
+          "version": {
+            "type": "string",
+            "title": "Version",
+            "description": "API version"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Timestamp"
+          }
+        },
+        "type": "object",
+        "required": [
+          "version"
+        ],
+        "title": "HealthCheckResponse",
+        "description": "Health check response"
+      },
+      "JobStatusEnum": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "processing",
+          "done",
+          "failed"
+        ],
+        "title": "JobStatusEnum"
+      },
+      "JobStatusResponse": {
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "title": "Job Id",
+            "description": "Unique job identifier"
+          },
+          "status": {
+            "$ref": "#/components/schemas/JobStatusEnum",
+            "description": "Current processing status"
+          },
+          "original_filename": {
+            "type": "string",
+            "title": "Original Filename",
+            "description": "Original filename"
+          },
+          "original_size": {
+            "type": "integer",
+            "title": "Original Size",
+            "description": "Original file size in bytes"
+          },
+          "optimized_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Optimized Size",
+            "description": "Optimized file size in bytes"
+          },
+          "compression_ratio": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Compression Ratio",
+            "description": "Compression ratio (0.0-1.0, lower is better)"
+          },
+          "r2_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "R2 Url",
+            "description": "Cloudflare R2 download URL"
+          },
+          "progress": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Progress",
+            "description": "Progress percentage (0-100)"
+          },
+          "progress_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Progress Status",
+            "description": "Progress status message"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message",
+            "description": "Error details if status is 'failed'"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At",
+            "description": "Job creation timestamp"
+          },
+          "expiry_date": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Expiry Date",
+            "description": "File expiration timestamp"
+          }
+        },
+        "type": "object",
+        "required": [
+          "job_id",
+          "status",
+          "original_filename",
+          "original_size",
+          "created_at",
+          "expiry_date"
+        ],
+        "title": "JobStatusResponse",
+        "description": "Job status polling response"
+      },
+      "OptimizationResultResponse": {
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "title": "Job Id",
+            "description": "Unique job identifier for polling"
+          },
+          "filename": {
+            "type": "string",
+            "title": "Filename",
+            "description": "Original filename"
+          },
+          "status": {
+            "$ref": "#/components/schemas/JobStatusEnum",
+            "description": "Current processing status",
+            "default": "pending"
+          }
+        },
+        "type": "object",
+        "required": [
+          "job_id",
+          "filename"
+        ],
+        "title": "OptimizationResultResponse",
+        "description": "Result of a single image optimization"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  }
+}
