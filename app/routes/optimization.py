@@ -11,7 +11,7 @@ import uuid
 import os
 import logging
 
-from app.models import Job, JobStatus, UsersQuota, db, get_db
+from app.models import Job, JobStatus, UsersQuota, User, Order, OrderStatus, db, get_db
 from app.schemas import (
     BulkOptimizeRequest,
     BulkOptimizeResponse,
@@ -86,7 +86,12 @@ async def optimize_images(
                 pro_expiry = datetime.fromisoformat(token_data["pro_expiry"])
         
         # Get or create user quota record
-        user_quota = db_session.query(UsersQuota).filter_by(ip_hash=ip_hash).first()
+        user_quota = (
+            db_session.query(UsersQuota)
+            .filter(UsersQuota.ip_hash == ip_hash)
+            .order_by(UsersQuota.updated_at.desc())
+            .first()
+        )
         if not user_quota:
             user_quota = UsersQuota(
                 id=str(uuid.uuid4()),
@@ -376,6 +381,41 @@ async def handle_lemonsqueezy_webhook(
         event_name = data.get("event_name")
         event_data = data.get("data", {}) or {}
         meta = data.get("meta", {}) or {}
+
+        # Extract a stable external order id + email (best-effort; payload structures vary)
+        external_id = (
+            str(event_data.get("id"))
+            if event_data.get("id") is not None
+            else str(data.get("id")) if data.get("id") is not None else None
+        )
+        attributes = event_data.get("attributes", {}) or {}
+        user_email = (
+            attributes.get("user_email")
+            or attributes.get("customer_email")
+            or attributes.get("email")
+            or (meta.get("custom_data", {}) or {}).get("email")
+        )
+
+        # Idempotently store the order event for support/audit
+        if external_id:
+            order = (
+                db_session.query(Order)
+                .filter_by(provider="lemonsqueezy", external_id=external_id)
+                .first()
+            )
+            if not order:
+                order = Order(provider="lemonsqueezy", external_id=external_id)
+                db_session.add(order)
+
+            order.event_name = event_name
+            order.email = user_email
+            order.raw_payload_json = payload.decode("utf-8", errors="replace")
+            order.status = (
+                OrderStatus.PAID.value
+                if event_name == "order:created"
+                else OrderStatus.UNKNOWN.value
+            )
+            db_session.flush()
         
         # Handle order:created event (successful payment)
         if event_name == "order:created":
@@ -387,23 +427,46 @@ async def handle_lemonsqueezy_webhook(
             session_id = custom.get("session_id")
 
             pro_expiry = datetime.utcnow() + timedelta(days=settings.pro_tier_expiry_days)
+            user = None
+            if user_email:
+                user = db_session.query(User).filter_by(email=user_email).first()
+                if not user:
+                    user = User(email=user_email)
+                    db_session.add(user)
+                    db_session.flush()
+
+            # Link order to user if possible
+            if external_id:
+                order = (
+                    db_session.query(Order)
+                    .filter_by(provider="lemonsqueezy", external_id=external_id)
+                    .first()
+                )
+                if order and user:
+                    order.user_id = user.id
+
+            # Create/update quota row for this paid user (or best-effort by ip/session)
             user_quota = None
-            if ip_hash:
+            if user:
+                user_quota = db_session.query(UsersQuota).filter_by(user_id=user.id).first()
+            if not user_quota and ip_hash:
                 user_quota = db_session.query(UsersQuota).filter_by(ip_hash=ip_hash).first()
             if not user_quota and session_id:
                 user_quota = db_session.query(UsersQuota).filter_by(session_id=session_id).first()
 
             if not user_quota:
-                # Create a new pro user entry when no match exists
                 user_quota = UsersQuota(
                     id=str(uuid.uuid4()),
-                    ip_hash=ip_hash or f"unlinked:{uuid.uuid4()}",
+                    user_id=user.id if user else None,
+                    ip_hash=ip_hash,
                     session_id=session_id,
                     is_pro=True,
                     pro_expiry_date=pro_expiry,
                 )
                 db_session.add(user_quota)
             else:
+                if user and not user_quota.user_id:
+                    user_quota.user_id = user.id
                 user_quota.is_pro = True
                 user_quota.pro_expiry_date = pro_expiry
 
