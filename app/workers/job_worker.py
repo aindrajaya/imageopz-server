@@ -4,6 +4,7 @@ Uses Redis as message broker for job processing.
 """
 
 import json
+import logging
 import redis
 from typing import Optional, List
 from datetime import datetime, timedelta
@@ -13,6 +14,9 @@ from app.config import settings
 from app.models import Job, JobStatus, UsersQuota
 from app.services.image_service import ImageOptimizer, r2_storage
 from app.utils.security import SecurityValidator
+
+
+logger = logging.getLogger("imageopz.queue")
 
 
 class JobQueue:
@@ -27,14 +31,14 @@ class JobQueue:
         try:
             self.redis_client = redis.from_url(
                 settings.redis_url,
-                decode_responses=True,
+                decode_responses=False,
                 socket_connect_timeout=5,
                 socket_keepalive=True
             )
             # Test connection
             self.redis_client.ping()
         except redis.ConnectionError:
-            print(f"Warning: Could not connect to Redis at {settings.redis_url}")
+            logger.warning("Could not connect to Redis at %s", settings.redis_url)
     
     def enqueue_job(self, job_id: str) -> bool:
         """
@@ -53,7 +57,7 @@ class JobQueue:
             self.redis_client.rpush(settings.queue_name, job_id)
             return True
         except Exception as e:
-            print(f"Failed to enqueue job {job_id}: {str(e)}")
+            logger.exception("Failed to enqueue job %s", job_id)
             return False
     
     def dequeue_job(self) -> Optional[str]:
@@ -68,9 +72,29 @@ class JobQueue:
         
         try:
             job_id = self.redis_client.lpop(settings.queue_name)
-            return job_id
+            return job_id.decode("utf-8") if job_id else None
         except Exception as e:
-            print(f"Failed to dequeue job: {str(e)}")
+            logger.exception("Failed to dequeue job")
+            return None
+
+    def dequeue_job_blocking(self, timeout_seconds: int = 5) -> Optional[str]:
+        """
+        Blocking pop to avoid busy looping.
+
+        Returns:
+            Job ID or None on timeout/error.
+        """
+        if not self.redis_client:
+            return None
+
+        try:
+            res = self.redis_client.blpop(settings.queue_name, timeout=timeout_seconds)
+            if not res:
+                return None
+            _, job_id = res
+            return job_id.decode("utf-8") if job_id else None
+        except Exception as e:
+            logger.exception("Failed to dequeue job (blocking)")
             return None
     
     def queue_length(self) -> int:
@@ -81,7 +105,7 @@ class JobQueue:
         try:
             return self.redis_client.llen(settings.queue_name)
         except Exception as e:
-            print(f"Failed to get queue length: {str(e)}")
+            logger.exception("Failed to get queue length")
             return 0
     
     def set_job_progress(self, job_id: str, progress: float, status: str = None):
@@ -108,10 +132,10 @@ class JobQueue:
             self.redis_client.setex(
                 key,
                 86400,  # 24 hour TTL
-                json.dumps(data)
+                json.dumps(data).encode("utf-8")
             )
         except Exception as e:
-            print(f"Failed to set job progress for {job_id}: {str(e)}")
+            logger.exception("Failed to set job progress for %s", job_id)
     
     def get_job_progress(self, job_id: str) -> Optional[dict]:
         """
@@ -126,18 +150,20 @@ class JobQueue:
         try:
             key = f"job:{job_id}:progress"
             data = self.redis_client.get(key)
-            return json.loads(data) if data else None
+            if not data:
+                return None
+            return json.loads(data.decode("utf-8"))
         except Exception as e:
-            print(f"Failed to get job progress for {job_id}: {str(e)}")
+            logger.exception("Failed to get job progress for %s", job_id)
             return None
 
 
 class JobWorker:
     """Processes image optimization jobs from queue"""
     
-    def __init__(self, db_session):
+    def __init__(self, db_session, queue: Optional[JobQueue] = None):
         self.db_session = db_session
-        self.queue = JobQueue()
+        self.queue = queue or JobQueue()
         self.optimizer = ImageOptimizer()
     
     def process_job(self, job_id: str) -> bool:
@@ -154,7 +180,7 @@ class JobWorker:
             # Retrieve job from database
             job = self.db_session.query(Job).filter_by(id=job_id).first()
             if not job:
-                print(f"Job {job_id} not found in database")
+                logger.warning("Job %s not found in database", job_id)
                 return False
             
             # Update status to processing
@@ -162,20 +188,16 @@ class JobWorker:
             self.db_session.commit()
             self.queue.set_job_progress(job_id, 10, "Processing started")
             
-            # Retrieve original file (from temp storage or re-fetch from request)
-            # This assumes file is stored temporarily or we have metadata to retrieve it
-            file_data = self._get_file_data(job_id)
-            if not file_data:
-                job.status = JobStatus.FAILED
-                job.processing_error = "Original file not found"
-                self.db_session.commit()
-                return False
-            
             self.queue.set_job_progress(job_id, 25, "Stripping metadata")
             
             # Strip EXIF and metadata
             try:
-                file_data = SecurityValidator.strip_exif_and_metadata(file_data)
+                if job.upload_path:
+                    file_data = SecurityValidator.strip_exif_and_metadata_path(job.upload_path)
+                else:
+                    file_data = self._get_file_data(job_id)
+                if not file_data:
+                    raise Exception("Original file not found")
             except Exception as e:
                 job.status = JobStatus.FAILED
                 job.processing_error = f"Metadata stripping failed: {str(e)}"
@@ -229,7 +251,7 @@ class JobWorker:
             return True
         
         except Exception as e:
-            print(f"Unexpected error processing job {job_id}: {str(e)}")
+            logger.exception("Unexpected error processing job %s", job_id)
             try:
                 job.status = JobStatus.FAILED
                 job.processing_error = f"Unexpected error: {str(e)}"
@@ -243,17 +265,57 @@ class JobWorker:
         Retrieve original file data for job.
         In a production system, this would retrieve from temp storage or a file server.
         """
-        # TODO: Implement based on your file storage strategy
-        # Options:
-        # 1. Store files in /tmp directory during upload
-        # 2. Store in Redis temporarily
-        # 3. Retrieve from initial upload request body
-        pass
+        try:
+            job = self.db_session.query(Job).filter_by(id=job_id).first()
+            if not job:
+                return None
+
+            # Prefer local disk (streamed from upload endpoint)
+            if job.upload_path:
+                import os
+                if os.path.exists(job.upload_path):
+                    with open(job.upload_path, "rb") as f:
+                        return f.read()
+
+            # Fallback: Redis blob (legacy path)
+            if self.queue.redis_client:
+                data = self.queue.redis_client.get(f"file:{job_id}")
+                return data
+
+            return None
+        except Exception:
+            return None
     
     def _cleanup_temp_file(self, job_id: str):
         """Remove temporary file after processing"""
-        # TODO: Implement based on storage strategy
-        pass
+        try:
+            job = self.db_session.query(Job).filter_by(id=job_id).first()
+            if not job:
+                return
+
+            # Remove local upload file if present
+            if job.upload_path:
+                import os
+                try:
+                    if os.path.exists(job.upload_path):
+                        os.remove(job.upload_path)
+                except Exception:
+                    pass
+                job.upload_path = None
+
+            # Remove legacy Redis blob if present
+            if self.queue.redis_client:
+                try:
+                    self.queue.redis_client.delete(f"file:{job_id}")
+                except Exception:
+                    pass
+
+            self.db_session.commit()
+        except Exception:
+            try:
+                self.db_session.rollback()
+            except Exception:
+                pass
     
     def process_queue(self, max_jobs: Optional[int] = None):
         """

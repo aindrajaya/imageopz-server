@@ -3,27 +3,37 @@ Scheduler for cleanup jobs like removing expired files from R2.
 Uses APScheduler for cron-based task scheduling.
 """
 
+import logging
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from datetime import datetime
 from sqlalchemy.orm import Session
 
-from app.models import Job, db
+from app.models import Job, JobStatus, db
 from app.services.image_service import r2_storage
 from app.config import settings
+
+
+logger = logging.getLogger("imageopz.cleanup")
 
 
 class CleanupScheduler:
     """Manages scheduled cleanup tasks"""
     
     def __init__(self):
-        self.scheduler = BackgroundScheduler()
+        self.scheduler = BackgroundScheduler(timezone=settings.timezone)
         self._setup_jobs()
     
     def _setup_jobs(self):
         """Register cleanup jobs"""
         # Parse cron schedule from config
-        cron_parts = settings.cleanup_cron_schedule.split()
+        cron_parts = (settings.cleanup_cron_schedule or "").split()
+        if len(cron_parts) != 5:
+            logger.warning(
+                "Invalid CLEANUP_CRON_SCHEDULE=%r; expected 5 fields, using hourly default '0 * * * *'",
+                settings.cleanup_cron_schedule,
+            )
+            cron_parts = ["0", "*", "*", "*", "*"]
         
         self.scheduler.add_job(
             func=self.cleanup_expired_files,
@@ -43,13 +53,13 @@ class CleanupScheduler:
         """Start the scheduler"""
         if not self.scheduler.running:
             self.scheduler.start()
-            print("Cleanup scheduler started")
+            logger.info("Cleanup scheduler started")
     
     def stop(self):
         """Stop the scheduler"""
         if self.scheduler.running:
             self.scheduler.shutdown()
-            print("Cleanup scheduler stopped")
+            logger.info("Cleanup scheduler stopped")
     
     @staticmethod
     def cleanup_expired_files():
@@ -64,7 +74,7 @@ class CleanupScheduler:
             expired_jobs = db_session.query(Job).filter(
                 Job.expiry_date <= datetime.utcnow(),
                 Job.deleted_at == None,
-                Job.status == "done"
+                Job.status == JobStatus.DONE
             ).all()
             
             deleted_count = 0
@@ -75,7 +85,7 @@ class CleanupScheduler:
                     # Delete from R2
                     if job.r2_object_key and r2_storage:
                         if not r2_storage.delete_optimized_image(job.r2_object_key):
-                            print(f"Warning: Failed to delete {job.r2_object_key} from R2")
+                            logger.warning("Failed to delete %s from R2", job.r2_object_key)
                             failed_count += 1
                             continue
                     
@@ -86,16 +96,16 @@ class CleanupScheduler:
                     deleted_count += 1
                 
                 except Exception as e:
-                    print(f"Error cleaning up job {job.id}: {str(e)}")
+                    logger.exception("Error cleaning up job %s", job.id)
                     failed_count += 1
             
             db_session.commit()
             db_session.close()
             
-            print(f"Cleanup completed: {deleted_count} deleted, {failed_count} failed")
+            logger.info("Cleanup completed: %s deleted, %s failed", deleted_count, failed_count)
         
         except Exception as e:
-            print(f"Critical error in cleanup job: {str(e)}")
+            logger.exception("Critical error in cleanup job")
 
 
 # Global scheduler instance
