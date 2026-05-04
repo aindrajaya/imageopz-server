@@ -89,4 +89,4 @@ Tabel dibuat sangat efisien. Logika lokalisasi bahasa (EN/ID) hanya ditangani di
 
 ## 7. Skrip Otomatisasi (Cron Jobs) & *Fallback*
 *   **Skrip `cleanup_expired_files.py` (Berjalan setiap jam 00:00 WIB):** Memindai semua baris di SQLite di mana `expiry_date` telah terlampaui. Skrip ini akan melakukan *API Call* ke Cloudflare R2 untuk menghapus objek gambar selamanya, menjamin klaim privasi di poin 2 (Frontend PRD).
-*   **Sistem Notifikasi Gagal (Email Fallback):** Jika proses terhenti atau file korup, integrasi API Sender akan mengirim pesan yang memberitahukan status kegagalan kepada pengguna, agar waktu tunggu pengguna tidak terbuang sia-sia.
+*   **Sistem Notifikasi Gagal (Email Fallback):** Jika proses terhenti atau file korup, integrasi API Resend akan mengirim pesan yang memberitahukan status kegagalan kepada pengguna, agar waktu tunggu pengguna tidak terbuang sia-sia.
