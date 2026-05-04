@@ -8,6 +8,8 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 from datetime import datetime, timedelta
 import uuid
+import os
+import logging
 
 from app.models import Job, JobStatus, UsersQuota, db, get_db
 from app.schemas import (
@@ -29,6 +31,7 @@ from app.workers.job_worker import job_queue
 from app.config import settings
 
 router = APIRouter(prefix="/api/v1", tags=["optimization"])
+logger = logging.getLogger("imageopz.routes.optimization")
 
 
 # ============= Optimize Endpoint =============
@@ -67,6 +70,8 @@ async def optimize_images(
     - 40 day expiry
     """
     try:
+        os.makedirs(settings.upload_dir, exist_ok=True)
+
         # Get user identifier
         ip_hash = IpFingerprint.get_ip_hash(request)
         
@@ -96,32 +101,95 @@ async def optimize_images(
             user_quota.pro_expiry_date = pro_expiry
             db_session.commit()
         
+        # Request-level quota checks (avoid partial acceptance)
+        if not is_pro:
+            is_valid, error_msg = QuotaManager.validate_free_tier_quota(
+                file_size=0,
+                files_count=len(images),
+                credits_used=user_quota.credits_used,
+                credits_requested=len(images),
+            )
+            if not is_valid:
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail=error_msg
+                )
+
         results = []
         
         # Process each image
         for image_file in images:
             try:
-                # Read file
-                file_data = await image_file.read()
-                file_size = len(file_data)
+                job_id = str(uuid.uuid4())
+
+                # Stream upload to disk (avoid loading into RAM)
+                upload_path = os.path.join(settings.upload_dir, f"{job_id}.upload")
+                file_size = 0
+                head = b""
+
+                max_size = (
+                    settings.pro_tier_max_file_size
+                    if (user_quota.is_pro and user_quota.pro_expiry_date)
+                    else settings.free_tier_max_file_size
+                )
+
+                with open(upload_path, "wb") as out:
+                    while True:
+                        chunk = await image_file.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        if len(head) < 4096:
+                            need = 4096 - len(head)
+                            head += chunk[:need]
+                        file_size += len(chunk)
+                        if file_size > max_size:
+                            out.close()
+                            try:
+                                os.remove(upload_path)
+                            except Exception:
+                                pass
+                            raise HTTPException(
+                                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                                detail=f"File size exceeds tier limit of {max_size:,} bytes"
+                            )
+                        out.write(chunk)
                 
                 # Validate extension
                 if not SecurityValidator.validate_file_extension(image_file.filename):
+                    try:
+                        os.remove(upload_path)
+                    except Exception:
+                        pass
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail=f"Unsupported file type: {image_file.filename}"
                     )
                 
                 # Validate magic number
-                valid, mime_or_error = SecurityValidator.validate_magic_number(file_data)
+                sniffed_mime = SecurityValidator.sniff_mime_type(head) if head else None
+                valid, mime_or_error = SecurityValidator.validate_magic_number(head or b"0000")
                 if not valid:
+                    try:
+                        os.remove(upload_path)
+                    except Exception:
+                        pass
                     raise HTTPException(
                         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                         detail=f"Invalid image format: {mime_or_error}"
                     )
+
+                if sniffed_mime and sniffed_mime not in SecurityValidator.ALLOWED_MIME_TYPES:
+                    try:
+                        os.remove(upload_path)
+                    except Exception:
+                        pass
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail=f"Unsupported MIME type: {sniffed_mime}"
+                    )
                 
                 # Validate OOM protection
-                SecurityValidator.validate_decompression_bomb_protection(file_data)
+                SecurityValidator.validate_decompression_bomb_protection_path(upload_path)
                 
                 # Check quotas
                 if user_quota.is_pro and user_quota.pro_expiry_date:
@@ -131,6 +199,10 @@ async def optimize_images(
                         user_quota.pro_expiry_date
                     )
                     if not is_valid:
+                        try:
+                            os.remove(upload_path)
+                        except Exception:
+                            pass
                         raise HTTPException(
                             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                             detail=error_msg
@@ -141,9 +213,14 @@ async def optimize_images(
                     is_valid, error_msg = QuotaManager.validate_free_tier_quota(
                         file_size,
                         len(images),
-                        user_quota.credits_used
+                        user_quota.credits_used,
+                        credits_requested=1,
                     )
                     if not is_valid:
+                        try:
+                            os.remove(upload_path)
+                        except Exception:
+                            pass
                         raise HTTPException(
                             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                             detail=error_msg
@@ -152,34 +229,33 @@ async def optimize_images(
                     expiry_days = settings.free_tier_expiry_days
                 
                 # Create job
-                job_id = str(uuid.uuid4())
                 expiry_date = datetime.utcnow() + timedelta(days=expiry_days)
                 
                 job = Job(
                     id=job_id,
-                    session_id=request.session.get("id", ip_hash) if hasattr(request, "session") else ip_hash,
+                    session_id=ip_hash,
                     user_quota_id=user_quota.id,
                     status=JobStatus.PENDING,
                     original_filename=image_file.filename,
                     original_size=file_size,
                     quality_setting=quality,
                     created_at=datetime.utcnow(),
-                    expiry_date=expiry_date
+                    expiry_date=expiry_date,
+                    upload_path=upload_path,
                 )
                 
                 db_session.add(job)
                 db_session.flush()
                 
                 # Enqueue job
-                job_queue.enqueue_job(job_id)
-                
-                # Store file data temporarily (in production, use external storage)
-                # For now, we'll store in Redis
-                if job_queue.redis_client:
-                    job_queue.redis_client.setex(
-                        f"file:{job_id}",
-                        86400,  # 24 hour TTL
-                        file_data
+                if not job_queue.enqueue_job(job_id):
+                    try:
+                        os.remove(upload_path)
+                    except Exception:
+                        pass
+                    raise HTTPException(
+                        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                        detail="Job queue unavailable (Redis not connected)"
                     )
                 
                 # Update quota
@@ -245,6 +321,8 @@ async def get_job_status(
                 detail=f"Job {job_id} not found"
             )
         
+        progress = job_queue.get_job_progress(job_id) if job_queue else None
+
         return JobStatusResponse(
             job_id=job.id,
             status=job.status.value,
@@ -255,7 +333,9 @@ async def get_job_status(
             r2_url=job.r2_url,
             error_message=job.processing_error,
             created_at=job.created_at,
-            expiry_date=job.expiry_date
+            expiry_date=job.expiry_date,
+            progress=progress.get("progress") if progress else None,
+            progress_status=progress.get("status") if progress else None,
         )
     
     except HTTPException:
@@ -294,24 +374,60 @@ async def handle_lemonsqueezy_webhook(
         import json
         data = json.loads(payload)
         event_name = data.get("event_name")
-        event_data = data.get("data", {})
+        event_data = data.get("data", {}) or {}
+        meta = data.get("meta", {}) or {}
         
         # Handle order:created event (successful payment)
         if event_name == "order:created":
-            customer_email = event_data.get("customer_email")
-            
-            # In production, you'd link email to user_quota via authentication
-            # For now, we'll create a pro tier entry
-            # This would typically be: find user by email, then activate pro
-            
-            print(f"Payment received for {customer_email}")
+            # Best-effort mapping back to an existing free-tier user record.
+            # Recommended: include `meta.custom_data.ip_hash` or `meta.custom_data.session_id`
+            # when creating the LemonSqueezy checkout.
+            custom = meta.get("custom_data", {}) or {}
+            ip_hash = custom.get("ip_hash")
+            session_id = custom.get("session_id")
+
+            pro_expiry = datetime.utcnow() + timedelta(days=settings.pro_tier_expiry_days)
+            user_quota = None
+            if ip_hash:
+                user_quota = db_session.query(UsersQuota).filter_by(ip_hash=ip_hash).first()
+            if not user_quota and session_id:
+                user_quota = db_session.query(UsersQuota).filter_by(session_id=session_id).first()
+
+            if not user_quota:
+                # Create a new pro user entry when no match exists
+                user_quota = UsersQuota(
+                    id=str(uuid.uuid4()),
+                    ip_hash=ip_hash or f"unlinked:{uuid.uuid4()}",
+                    session_id=session_id,
+                    is_pro=True,
+                    pro_expiry_date=pro_expiry,
+                )
+                db_session.add(user_quota)
+            else:
+                user_quota.is_pro = True
+                user_quota.pro_expiry_date = pro_expiry
+
+            # Extend expiry window for existing jobs for this user (best-effort)
+            try:
+                db_session.query(Job).filter(
+                    Job.user_quota_id == user_quota.id,
+                    Job.deleted_at == None,
+                ).update({Job.expiry_date: pro_expiry}, synchronize_session=False)
+            except Exception:
+                pass
+
+            db_session.commit()
+
+            # Return a token useful for manual testing; client flows usually deliver tokens elsewhere.
+            token = JWTHandler.generate_token(user_quota.id)
+            return {"success": True, "message": "Pro activated", "access_token": token}
         
         return {"success": True, "message": "Webhook processed"}
     
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Webhook processing error: {str(e)}")
+        logger.exception("Webhook processing error")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Webhook processing failed: {str(e)}"
