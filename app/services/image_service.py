@@ -6,6 +6,7 @@ Integrates with Cloudflare R2 for distributed storage.
 import io
 import os
 import uuid
+import logging
 from typing import Tuple, Optional
 from PIL import Image
 import pillow_avif  # noqa - registers AVIF codec
@@ -14,6 +15,9 @@ from botocore.exceptions import ClientError
 
 from app.config import settings
 from app.utils.security import SecurityValidator
+
+
+logger = logging.getLogger("imageopz.r2")
 
 
 class ImageOptimizer:
@@ -161,7 +165,7 @@ class R2Storage:
             )
             return True
         except ClientError as e:
-            print(f"Failed to delete {object_key} from R2: {str(e)}")
+            logger.exception("Failed to delete %s from R2", object_key)
             return False
 
 
