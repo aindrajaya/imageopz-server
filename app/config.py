@@ -4,15 +4,22 @@ Loads settings from environment variables with sensible defaults.
 """
 
 from pydantic_settings import BaseSettings
-from typing import Optional
+from typing import Optional, Literal
+from pydantic import field_validator, model_validator
 
 
 class Settings(BaseSettings):
     # FastAPI
-    debug: bool = True
+    debug: bool = False
     api_host: str = "0.0.0.0"
     api_port: int = 8000
-    api_workers: int = 4
+    api_workers: int = 1
+    proxy_headers: bool = True
+
+    # CORS
+    # Comma-separated origins, e.g. "https://imageopz.com,https://www.imageopz.com"
+    cors_allow_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
+    cors_allow_credentials: bool = False
 
     # Database
     database_url: str = "sqlite:///./imageopz.db"
@@ -39,9 +46,9 @@ class Settings(BaseSettings):
     lemonsqueezy_secret: Optional[str] = None
     lemonsqueezy_api_key: Optional[str] = None
 
-    # Sender (Email notifications)
-    sender_api_key: Optional[str] = None
-    sender_from_email: str = "noreply@imageopz.com"
+    # Resend (Email notifications)
+    resend_api_key: Optional[str] = None
+    resend_from_email: str = "ImageOpz <noreply@imageopz.com>"
 
     # Image Processing
     min_image_size: int = 1 * 1024 * 1024  # 1MB
@@ -62,14 +69,56 @@ class Settings(BaseSettings):
     pro_tier_expiry_days: int = 40
 
     # Cleanup
-    cleanup_cron_schedule: str = "0 0 * * *"  # Daily at midnight
+    cleanup_cron_schedule: str = "0 * * * *"  # Hourly at minute 0
+    timezone: str = "Asia/Jakarta"
+
+    # Upload temp storage
+    upload_dir: str = "./tmp/uploads"
+
+    # Background worker
+    worker_enabled: bool = True
+    worker_poll_timeout_seconds: int = 5
 
     # Environment
-    environment: str = "development"
+    environment: Literal["development", "staging", "production"] = "development"
 
     class Config:
         env_file = ".env"
         case_sensitive = False
+
+    @field_validator("debug", mode="before")
+    @classmethod
+    def _parse_debug(cls, value):
+        if isinstance(value, bool) or value is None:
+            return value
+        if isinstance(value, (int, float)):
+            return bool(value)
+        if isinstance(value, str):
+            v = value.strip().lower()
+            if v in {"1", "true", "yes", "y", "on", "debug", "development", "dev"}:
+                return True
+            if v in {"0", "false", "no", "n", "off", "release", "production", "prod"}:
+                return False
+        return value
+
+    def cors_allow_origins_list(self) -> list[str]:
+        raw = (self.cors_allow_origins or "").strip()
+        if not raw:
+            return []
+        return [part.strip() for part in raw.split(",") if part.strip()]
+
+    @model_validator(mode="after")
+    def _validate_production_settings(self):
+        if self.environment == "production":
+            if self.debug:
+                raise ValueError("DEBUG must be false in production")
+            if not self.secret_key or self.secret_key.startswith("dev-secret-key"):
+                raise ValueError("SECRET_KEY must be set to a strong value in production")
+            if "*" in self.cors_allow_origins_list():
+                raise ValueError("CORS_ALLOW_ORIGINS must not include '*' in production")
+            if self.cors_allow_credentials and "*" in self.cors_allow_origins_list():
+                raise ValueError("CORS_ALLOW_ORIGINS cannot be '*' when credentials are enabled")
+        return self
 
 
 # Global settings instance
