@@ -4,6 +4,7 @@ Health check and utility API routes.
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 
 from app.models import db, get_db
 from app.schemas import HealthCheckResponse
@@ -24,10 +25,16 @@ async def health_check(db_session: Session = Depends(get_db)):
     """
     try:
         # Check database
-        db_session.execute("SELECT 1")
+        db_session.execute(text("SELECT 1"))
         
         # Check Redis
-        redis_status = "connected" if job_queue.redis_client else "disconnected"
+        redis_status = "disconnected"
+        if job_queue.redis_client:
+            try:
+                job_queue.redis_client.ping()
+                redis_status = "connected"
+            except Exception:
+                redis_status = "error"
         
         return HealthCheckResponse(
             status=f"healthy ({redis_status})",
