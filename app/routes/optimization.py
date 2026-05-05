@@ -122,15 +122,19 @@ async def optimize_images(
         # Get user identifier
         ip_hash = IpFingerprint.get_ip_hash(request)
         
-        # Check authentication
-        is_pro = False
-        pro_expiry = None
+        # Check authentication (optional JWT path)
+        token_is_pro = False
+        token_pro_expiry: Optional[datetime] = None
         
         if auth_token:
             token_data = JWTHandler.verify_token(auth_token)
             if token_data and "pro_expiry" in token_data:
-                is_pro = True
-                pro_expiry = datetime.fromisoformat(token_data["pro_expiry"])
+                try:
+                    token_is_pro = True
+                    token_pro_expiry = datetime.fromisoformat(token_data["pro_expiry"])
+                except Exception:
+                    token_is_pro = False
+                    token_pro_expiry = None
         
         # Get or create user quota record
         q = db_session.query(UsersQuota)
@@ -151,14 +155,14 @@ async def optimize_images(
                 id=str(uuid.uuid4()),
                 ip_hash=ip_hash,
                 session_id=session_id,
-                is_pro=is_pro,
-                pro_expiry_date=pro_expiry
+                is_pro=token_is_pro,
+                pro_expiry_date=token_pro_expiry
             )
             db_session.add(user_quota)
             db_session.commit()
-        elif is_pro and pro_expiry:
+        elif token_is_pro and token_pro_expiry:
             user_quota.is_pro = True
-            user_quota.pro_expiry_date = pro_expiry
+            user_quota.pro_expiry_date = token_pro_expiry
             if session_id and not user_quota.session_id:
                 user_quota.session_id = session_id
             if ip_hash and not user_quota.ip_hash:
@@ -175,9 +179,20 @@ async def optimize_images(
                 updated = True
             if updated:
                 db_session.commit()
+
+        # Determine effective pro status (webhook-activated quota should work without auth_token)
+        now = datetime.utcnow()
+        quota_is_pro = bool(
+            user_quota.is_pro
+            and user_quota.pro_expiry_date is not None
+            and user_quota.pro_expiry_date > now
+        )
+        effective_is_pro = bool(
+            (token_is_pro and token_pro_expiry and token_pro_expiry > now) or quota_is_pro
+        )
         
         # Request-level quota checks (avoid partial acceptance)
-        if not is_pro:
+        if not effective_is_pro:
             is_valid, error_msg = QuotaManager.validate_free_tier_quota(
                 file_size=0,
                 files_count=len(images),
@@ -267,7 +282,7 @@ async def optimize_images(
                 SecurityValidator.validate_decompression_bomb_protection_path(upload_path)
                 
                 # Check quotas
-                if user_quota.is_pro and user_quota.pro_expiry_date:
+                if effective_is_pro and user_quota.pro_expiry_date:
                     is_valid, error_msg = QuotaManager.validate_pro_tier_quota(
                         file_size,
                         len(images),
@@ -334,7 +349,7 @@ async def optimize_images(
                     )
                 
                 # Update quota
-                if not user_quota.is_pro:
+                if not effective_is_pro:
                     user_quota.credits_used += 1
                 
                 results.append(OptimizationResultResponse(

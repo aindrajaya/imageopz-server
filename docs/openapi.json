@@ -331,6 +331,56 @@
         }
       }
     },
+    "/api/v1/session/me": {
+      "get": {
+        "tags": [
+          "session"
+        ],
+        "summary": "Get Session Me",
+        "description": "Return the server-side session state needed by the frontend UI.\n\nThis is the authoritative source for:\n- whether the current session is Pro (active)\n- free-tier credits used/remaining",
+        "operationId": "get_session_me_api_v1_session_me_get",
+        "parameters": [
+          {
+            "name": "X-Session-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Session-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionMeResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/": {
       "get": {
         "summary": "Root",
@@ -777,6 +827,69 @@
         ],
         "title": "OptimizationResultResponse",
         "description": "Result of a single image optimization"
+      },
+      "SessionMeResponse": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success",
+            "description": "Whether lookup succeeded",
+            "default": true
+          },
+          "session_id": {
+            "type": "string",
+            "title": "Session Id",
+            "description": "Current session id (cookie/header)"
+          },
+          "ip_hash": {
+            "type": "string",
+            "title": "Ip Hash",
+            "description": "Server-side IP hash for this request"
+          },
+          "is_pro": {
+            "type": "boolean",
+            "title": "Is Pro",
+            "description": "Whether this session currently has active Pro"
+          },
+          "pro_expiry_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pro Expiry Date",
+            "description": "Pro expiry date (if pro)"
+          },
+          "credits_used": {
+            "type": "integer",
+            "title": "Credits Used",
+            "description": "Credits used for free tier tracking"
+          },
+          "free_tier_max_credits": {
+            "type": "integer",
+            "title": "Free Tier Max Credits",
+            "description": "Configured free tier credit limit"
+          },
+          "credits_remaining": {
+            "type": "integer",
+            "title": "Credits Remaining",
+            "description": "Remaining free credits (0 if exhausted; -1 if pro)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_id",
+          "ip_hash",
+          "is_pro",
+          "credits_used",
+          "free_tier_max_credits",
+          "credits_remaining"
+        ],
+        "title": "SessionMeResponse"
       },
       "SessionRestoreRequest": {
         "properties": {

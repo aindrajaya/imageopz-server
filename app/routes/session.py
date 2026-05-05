@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models import User, UsersQuota, get_db
-from app.schemas import SessionRestoreRequest, SessionRestoreResponse
+from app.schemas import SessionRestoreRequest, SessionRestoreResponse, SessionMeResponse
 from app.utils.security import IpFingerprint
 
 
@@ -110,3 +110,59 @@ async def restore_pro_session(
 
     return SessionRestoreResponse(success=True, session_id=session_id, pro_expiry_date=pro_quota.pro_expiry_date)
 
+
+@router.get(
+    "/session/me",
+    response_model=SessionMeResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def get_session_me(
+    request: Request,
+    response: Response,
+    session_id_header: Optional[str] = Header(None, alias="X-Session-Id"),
+    db_session: Session = Depends(get_db),
+):
+    """
+    Return the server-side session state needed by the frontend UI.
+
+    This is the authoritative source for:
+    - whether the current session is Pro (active)
+    - free-tier credits used/remaining
+    """
+    session_id = _get_or_create_session_id(request, session_id_header)
+    _set_session_cookie(response, session_id)
+    ip_hash = IpFingerprint.get_ip_hash(request)
+
+    quota = (
+        db_session.query(UsersQuota)
+        .filter(UsersQuota.session_id == session_id)
+        .order_by(UsersQuota.updated_at.desc())
+        .first()
+    )
+    if not quota:
+        quota = (
+            db_session.query(UsersQuota)
+            .filter(UsersQuota.ip_hash == ip_hash)
+            .order_by(UsersQuota.updated_at.desc())
+            .first()
+        )
+
+    credits_used = int(getattr(quota, "credits_used", 0) or 0)
+    pro_expiry = getattr(quota, "pro_expiry_date", None)
+    is_pro = bool(getattr(quota, "is_pro", False) and pro_expiry and pro_expiry > datetime.utcnow())
+
+    if is_pro:
+        credits_remaining = -1
+    else:
+        credits_remaining = max(0, settings.free_tier_max_credits - credits_used)
+
+    return SessionMeResponse(
+        success=True,
+        session_id=session_id,
+        ip_hash=ip_hash,
+        is_pro=is_pro,
+        pro_expiry_date=pro_expiry if is_pro else None,
+        credits_used=credits_used,
+        free_tier_max_credits=settings.free_tier_max_credits,
+        credits_remaining=credits_remaining,
+    )

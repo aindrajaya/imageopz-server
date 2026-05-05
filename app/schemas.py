@@ -212,6 +212,17 @@ class SessionRestoreResponse(BaseModel):
     pro_expiry_date: datetime = Field(..., description="Pro expiry date")
 
 
+class SessionMeResponse(BaseModel):
+    success: bool = Field(True, description="Whether lookup succeeded")
+    session_id: str = Field(..., description="Current session id (cookie/header)")
+    ip_hash: str = Field(..., description="Server-side IP hash for this request")
+    is_pro: bool = Field(..., description="Whether this session currently has active Pro")
+    pro_expiry_date: Optional[datetime] = Field(None, description="Pro expiry date (if pro)")
+    credits_used: int = Field(..., description="Credits used for free tier tracking")
+    free_tier_max_credits: int = Field(..., description="Configured free tier credit limit")
+    credits_remaining: int = Field(..., description="Remaining free credits (0 if exhausted; -1 if pro)")
+
+
 # ============= Health Check Schemas =============
 
 class HealthCheckResponse(BaseModel):
