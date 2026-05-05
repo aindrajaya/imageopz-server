@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models import User, UsersQuota, get_db
-from app.schemas import SessionRestoreRequest, SessionRestoreResponse, SessionMeResponse
+from app.schemas import SessionRestoreRequest, SessionRestoreResponse, SessionMeResponse, SessionLogoutResponse
 from app.utils.security import IpFingerprint
 
 
@@ -40,6 +40,17 @@ def _set_session_cookie(response: Response, session_id: str) -> None:
         path="/",
     )
 
+def _clear_session_cookie(response: Response) -> None:
+    response.set_cookie(
+        key=settings.session_cookie_name,
+        value="",
+        max_age=0,
+        expires=0,
+        httponly=False,
+        samesite="lax",
+        secure=(settings.environment == "production"),
+        path="/",
+    )
 
 @router.post(
     "/session/restore",
@@ -96,6 +107,8 @@ async def restore_pro_session(
             session_id=session_id,
             is_pro=True,
             pro_expiry_date=pro_quota.pro_expiry_date,
+            pro_verified=True,
+            pro_source="restore",
         )
         db_session.add(target)
     else:
@@ -104,6 +117,8 @@ async def restore_pro_session(
             target.ip_hash = ip_hash
         target.is_pro = True
         target.pro_expiry_date = pro_quota.pro_expiry_date
+        target.pro_verified = True
+        target.pro_source = "restore"
 
     db_session.commit()
     logger.info("Session restore succeeded for email=%s session_id=%s", body.email, session_id)
@@ -150,6 +165,9 @@ async def get_session_me(
     credits_used = int(getattr(quota, "credits_used", 0) or 0)
     pro_expiry = getattr(quota, "pro_expiry_date", None)
     is_pro = bool(getattr(quota, "is_pro", False) and pro_expiry and pro_expiry > datetime.utcnow())
+    pro_verified = bool(getattr(quota, "pro_verified", False)) if quota else False
+    pro_source = str(getattr(quota, "pro_source", None) or ("none" if not is_pro else "unknown")) if quota else "none"
+    needs_restore = bool(is_pro and not pro_verified)
 
     if is_pro:
         credits_remaining = -1
@@ -162,7 +180,29 @@ async def get_session_me(
         ip_hash=ip_hash,
         is_pro=is_pro,
         pro_expiry_date=pro_expiry if is_pro else None,
+        pro_verified=pro_verified,
+        pro_source=pro_source,
+        needs_restore=needs_restore,
         credits_used=credits_used,
         free_tier_max_credits=settings.free_tier_max_credits,
         credits_remaining=credits_remaining,
     )
+
+
+@router.post(
+    "/session/logout",
+    response_model=SessionLogoutResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def logout_session(
+    request: Request,
+    response: Response,
+):
+    """
+    Clear the session cookie and rotate to a new session id.
+    Useful when the frontend wants a reliable "reset session" action.
+    """
+    _clear_session_cookie(response)
+    new_session_id = str(uuid.uuid4())
+    _set_session_cookie(response, new_session_id)
+    return SessionLogoutResponse(success=True, session_id=new_session_id)

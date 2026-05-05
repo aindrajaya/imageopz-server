@@ -218,9 +218,17 @@ class SessionMeResponse(BaseModel):
     ip_hash: str = Field(..., description="Server-side IP hash for this request")
     is_pro: bool = Field(..., description="Whether this session currently has active Pro")
     pro_expiry_date: Optional[datetime] = Field(None, description="Pro expiry date (if pro)")
+    pro_verified: bool = Field(..., description="Whether Pro is verified/linked for this session")
+    pro_source: str = Field(..., description="How Pro was linked: webhook|restore|checkout|unknown|none")
+    needs_restore: bool = Field(..., description="UI hint: Pro detected but not verified for this session")
     credits_used: int = Field(..., description="Credits used for free tier tracking")
     free_tier_max_credits: int = Field(..., description="Configured free tier credit limit")
     credits_remaining: int = Field(..., description="Remaining free credits (0 if exhausted; -1 if pro)")
+
+
+class SessionLogoutResponse(BaseModel):
+    success: bool = Field(True, description="Whether logout succeeded")
+    session_id: str = Field(..., description="New session id after rotation")
 
 
 # ============= Health Check Schemas =============

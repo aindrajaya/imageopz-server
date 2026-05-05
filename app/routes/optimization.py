@@ -156,13 +156,17 @@ async def optimize_images(
                 ip_hash=ip_hash,
                 session_id=session_id,
                 is_pro=token_is_pro,
-                pro_expiry_date=token_pro_expiry
+                pro_expiry_date=token_pro_expiry,
+                pro_verified=bool(token_is_pro and token_pro_expiry),
+                pro_source="token" if (token_is_pro and token_pro_expiry) else "none",
             )
             db_session.add(user_quota)
             db_session.commit()
         elif token_is_pro and token_pro_expiry:
             user_quota.is_pro = True
             user_quota.pro_expiry_date = token_pro_expiry
+            user_quota.pro_verified = True
+            user_quota.pro_source = "token"
             if session_id and not user_quota.session_id:
                 user_quota.session_id = session_id
             if ip_hash and not user_quota.ip_hash:
@@ -701,6 +705,8 @@ async def handle_lemonsqueezy_webhook(
                     session_id=session_id,
                     is_pro=True,
                     pro_expiry_date=pro_expiry,
+                    pro_verified=True,
+                    pro_source="webhook",
                 )
                 db_session.add(user_quota)
             else:
@@ -708,6 +714,8 @@ async def handle_lemonsqueezy_webhook(
                     user_quota.user_id = user.id
                 user_quota.is_pro = True
                 user_quota.pro_expiry_date = pro_expiry
+                user_quota.pro_verified = True
+                user_quota.pro_source = "webhook"
 
             # Extend expiry window for existing jobs for this user (best-effort)
             try:

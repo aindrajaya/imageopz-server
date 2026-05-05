@@ -381,6 +381,28 @@
         }
       }
     },
+    "/api/v1/session/logout": {
+      "post": {
+        "tags": [
+          "session"
+        ],
+        "summary": "Logout Session",
+        "description": "Clear the session cookie and rotate to a new session id.\nUseful when the frontend wants a reliable \"reset session\" action.",
+        "operationId": "logout_session_api_v1_session_logout_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionLogoutResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/": {
       "get": {
         "summary": "Root",
@@ -828,6 +850,26 @@
         "title": "OptimizationResultResponse",
         "description": "Result of a single image optimization"
       },
+      "SessionLogoutResponse": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success",
+            "description": "Whether logout succeeded",
+            "default": true
+          },
+          "session_id": {
+            "type": "string",
+            "title": "Session Id",
+            "description": "New session id after rotation"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_id"
+        ],
+        "title": "SessionLogoutResponse"
+      },
       "SessionMeResponse": {
         "properties": {
           "success": {
@@ -864,6 +906,21 @@
             "title": "Pro Expiry Date",
             "description": "Pro expiry date (if pro)"
           },
+          "pro_verified": {
+            "type": "boolean",
+            "title": "Pro Verified",
+            "description": "Whether Pro is verified/linked for this session"
+          },
+          "pro_source": {
+            "type": "string",
+            "title": "Pro Source",
+            "description": "How Pro was linked: webhook|restore|checkout|unknown|none"
+          },
+          "needs_restore": {
+            "type": "boolean",
+            "title": "Needs Restore",
+            "description": "UI hint: Pro detected but not verified for this session"
+          },
           "credits_used": {
             "type": "integer",
             "title": "Credits Used",
@@ -885,6 +942,9 @@
           "session_id",
           "ip_hash",
           "is_pro",
+          "pro_verified",
+          "pro_source",
+          "needs_restore",
           "credits_used",
           "free_tier_max_credits",
           "credits_remaining"

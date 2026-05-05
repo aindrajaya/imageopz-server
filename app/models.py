@@ -9,8 +9,11 @@ from sqlalchemy.orm import sessionmaker
 from datetime import datetime, timedelta
 import enum
 import uuid
+import logging
 
 from app.config import settings
+
+logger = logging.getLogger("imageopz.models")
 
 Base = declarative_base()
 
@@ -66,6 +69,8 @@ class UsersQuota(Base):
     credits_used = Column(Integer, default=0)
     is_pro = Column(Boolean, default=False)
     pro_expiry_date = Column(DateTime, nullable=True)
+    pro_verified = Column(Boolean, default=False)
+    pro_source = Column(String(32), nullable=True)  # e.g. 'webhook' | 'restore' | 'unknown'
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -181,6 +186,23 @@ class Database:
         
         # Create all tables
         Base.metadata.create_all(bind=self.engine)
+
+        # Lightweight migrations for SQLite (add columns if missing)
+        if "sqlite" in settings.database_url:
+            try:
+                with self.engine.connect() as conn:
+                    # users_quota: add pro_verified, pro_source columns if they don't exist (SQLite supports ADD COLUMN)
+                    rows = conn.exec_driver_sql("PRAGMA table_info(users_quota);").fetchall()
+                    existing = {r[1] for r in rows}  # (cid, name, type, notnull, dflt_value, pk)
+                    if "pro_verified" not in existing:
+                        conn.exec_driver_sql("ALTER TABLE users_quota ADD COLUMN pro_verified BOOLEAN NOT NULL DEFAULT 0;")
+                        logger.info("Migrated users_quota: added pro_verified")
+                    if "pro_source" not in existing:
+                        conn.exec_driver_sql("ALTER TABLE users_quota ADD COLUMN pro_source VARCHAR(32);")
+                        logger.info("Migrated users_quota: added pro_source")
+                    conn.commit()
+            except Exception:
+                logger.exception("SQLite migration failed")
     
     def get_session(self):
         """Get a new database session"""
