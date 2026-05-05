@@ -9,17 +9,12 @@ def _sign(payload: str, secret: str) -> str:
 
 def test_lemonsqueezy_webhook_creates_order_and_user(client, test_env):
     payload_obj = {
-        "event_name": "order:created",
+        "meta": {"event_name": "order_created", "custom_data": {"ip_hash": "iphash_test_123"}},
         "data": {
             "id": "order_123",
             "attributes": {
                 "user_email": "paid@example.com",
             },
-        },
-        "meta": {
-            "custom_data": {
-                "ip_hash": "iphash_test_123",
-            }
         },
     }
     payload = json.dumps(payload_obj)
@@ -53,4 +48,3 @@ def test_lemonsqueezy_webhook_creates_order_and_user(client, test_env):
         assert quota.pro_expiry_date is not None
     finally:
         s.close()
-

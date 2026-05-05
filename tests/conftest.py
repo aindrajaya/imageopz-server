@@ -38,6 +38,10 @@ def test_env(tmp_path_factory):
 
     # Webhook secret for signature verification tests
     os.environ["LEMONSQUEEZY_SECRET"] = "test-lemonsqueezy-secret"
+    # Disable outbound LemonSqueezy API calls during tests (avoid reading .env values).
+    os.environ["LEMONSQUEEZY_API_KEY"] = ""
+    os.environ["LEMONSQUEEZY_STORE_ID"] = ""
+    os.environ["LEMONSQUEEZY_VARIANT_ID"] = ""
 
     yield {"tmp_dir": tmp_dir, "db_path": db_path, "upload_dir": upload_dir}
 
