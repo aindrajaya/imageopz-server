@@ -9,6 +9,9 @@ def test_session_me_returns_defaults(client):
     assert "pro_verified" in body
     assert "pro_source" in body
     assert "needs_restore" in body
+    assert "pro_tier_max_credits" in body
+    assert "pro_credits_used" in body
+    assert "pro_credits_remaining" in body
 
 
 def test_session_logout_rotates_cookie(client):
@@ -20,4 +23,3 @@ def test_session_logout_rotates_cookie(client):
     # Should set cookie at least once (clear + set)
     set_cookie = res.headers.get("set-cookie", "")
     assert "imageopz_sid" in set_cookie
-

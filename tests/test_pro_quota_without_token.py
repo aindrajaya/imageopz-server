@@ -34,4 +34,3 @@ def test_pro_quota_allows_more_than_3_without_auth_token(client, monkeypatch):
     files = [("images", (f"tiny{i}.png", _PNG_1X1, "image/png")) for i in range(4)]
     res = client.post("/api/v1/optimize", files=files, headers={"X-Session-Id": "pro_session_1"})
     assert res.status_code == 202, res.text
-
