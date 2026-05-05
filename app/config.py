@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     # LemonSqueezy
     lemonsqueezy_secret: Optional[str] = None
     lemonsqueezy_api_key: Optional[str] = None
+    lemonsqueezy_store_id: Optional[str] = None
+    lemonsqueezy_variant_id: Optional[str] = None
+    lemonsqueezy_redirect_url: Optional[str] = None
+    lemonsqueezy_test_mode: bool = False
 
     # Resend (Email notifications)
     resend_api_key: Optional[str] = None
@@ -78,6 +82,10 @@ class Settings(BaseSettings):
     # Background worker
     worker_enabled: bool = True
     worker_poll_timeout_seconds: int = 5
+
+    # Session cookie (browser id used for quota + payment relinking)
+    session_cookie_name: str = "imageopz_sid"
+    session_cookie_max_age_days: int = 365
 
     # Environment
     environment: Literal["development", "staging", "production"] = "development"

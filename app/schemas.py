@@ -161,6 +161,57 @@ class LemonSqueezyWebhookPayload(BaseModel):
     meta: dict = Field(..., description="Event metadata")
 
 
+# ============= Payment Schemas =============
+
+class LemonSqueezyCreateCheckoutRequest(BaseModel):
+    """
+    Create a LemonSqueezy checkout URL server-side.
+    `session_id` should be a stable browser identifier (e.g. UUIDv4 stored in localStorage/cookie).
+    """
+
+    email: str = Field(..., description="Customer email to prefill + link purchase")
+    session_id: Optional[str] = Field(
+        None,
+        max_length=255,
+        description="Stable browser session identifier (stored in users_quota.session_id)",
+    )
+    store_id: Optional[str] = Field(
+        None,
+        description="LemonSqueezy store id (defaults to env LEMONSQUEEZY_STORE_ID)",
+    )
+    variant_id: Optional[str] = Field(
+        None,
+        description="LemonSqueezy variant id (defaults to env LEMONSQUEEZY_VARIANT_ID)",
+    )
+    redirect_url: Optional[str] = Field(
+        None,
+        description="Override redirect URL after payment (defaults to env LEMONSQUEEZY_REDIRECT_URL)",
+    )
+    test_mode: Optional[bool] = Field(
+        None,
+        description="Whether to create this checkout in test mode (defaults to env LEMONSQUEEZY_TEST_MODE)",
+    )
+
+
+class LemonSqueezyCreateCheckoutResponse(BaseModel):
+    success: bool = Field(True, description="Whether checkout was created successfully")
+    checkout_id: str = Field(..., description="LemonSqueezy checkout id")
+    checkout_url: str = Field(..., description="Hosted checkout URL to redirect the user to")
+    ip_hash: str = Field(..., description="Server-calculated IP hash (stored in users_quota.ip_hash)")
+    session_id: Optional[str] = Field(None, description="Session id used for matching in webhook")
+    provider: str = Field("lemonsqueezy", description="Payment provider identifier")
+
+
+class SessionRestoreRequest(BaseModel):
+    email: str = Field(..., description="Email that was used to purchase Pro")
+
+
+class SessionRestoreResponse(BaseModel):
+    success: bool = Field(True, description="Whether restore succeeded")
+    session_id: str = Field(..., description="Session id now bound to Pro")
+    pro_expiry_date: datetime = Field(..., description="Pro expiry date")
+
+
 # ============= Health Check Schemas =============
 
 class HealthCheckResponse(BaseModel):
