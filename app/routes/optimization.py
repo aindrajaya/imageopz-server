@@ -22,8 +22,6 @@ from app.schemas import (
     LemonSqueezyWebhookPayload,
     LemonSqueezyCreateCheckoutRequest,
     LemonSqueezyCreateCheckoutResponse,
-    SessionRestoreRequest,
-    SessionRestoreResponse,
 )
 from app.utils.security import (
     SecurityValidator,
@@ -60,6 +58,17 @@ def _set_session_cookie(response: Response, session_id: str) -> None:
         secure=(settings.environment == "production"),
         path="/",
     )
+
+def _mask_email(email: str) -> str:
+    e = (email or "").strip()
+    if "@" not in e:
+        return "<invalid>"
+    name, domain = e.split("@", 1)
+    if len(name) <= 2:
+        name_masked = name[:1] + "*"
+    else:
+        name_masked = name[:1] + "*" * (len(name) - 2) + name[-1:]
+    return f"{name_masked}@{domain}"
 
 
 # ============= Optimize Endpoint =============
@@ -436,14 +445,62 @@ async def create_lemonsqueezy_checkout(
                     "Accept": "application/vnd.api+json",
                     "Content-Type": "application/vnd.api+json",
                     "Authorization": f"Bearer {settings.lemonsqueezy_api_key}",
+                    "User-Agent": "imageopz-server/1.0",
                 },
                 json=lemonsqueezy_payload,
+                follow_redirects=True,
             )
         if res.status_code >= 400:
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=f"LemonSqueezy API error: {res.status_code} {res.text}",
-            )
+            # LemonSqueezy uses JSON:API error responses.
+            detail = f"LemonSqueezy API error: {res.status_code}"
+            ls_request_id = res.headers.get("apigw-requestid") or res.headers.get("x-request-id")
+            cf_ray = res.headers.get("cf-ray")
+            try:
+                j = res.json()
+                errs = j.get("errors") if isinstance(j, dict) else None
+                if isinstance(errs, list) and errs:
+                    first = errs[0] if isinstance(errs[0], dict) else {}
+                    title = first.get("title")
+                    err_detail = first.get("detail")
+                    if title or err_detail:
+                        detail = f"{detail} - {title or ''} {err_detail or ''}".strip()
+            except Exception:
+                pass
+
+            # Add request correlation hints (safe to expose + log).
+            if ls_request_id:
+                detail = f"{detail} (ls_request_id={ls_request_id})"
+            if cf_ray:
+                detail = f"{detail} (cf_ray={cf_ray})"
+
+            if res.status_code == 404:
+                detail = (
+                    f"{detail}. Common causes: wrong `store_id`/`variant_id`, or API key mode mismatch "
+                    f"(test API key with live store ids, or vice versa)."
+                )
+
+            # Server-side log with extra context (do not log API key).
+            try:
+                body_preview = res.text
+                if body_preview and len(body_preview) > 1200:
+                    body_preview = body_preview[:1200] + "...(truncated)"
+                logger.warning(
+                    "LemonSqueezy checkout create failed: status=%s store_id=%s variant_id=%s test_mode=%s email=%s session_id=%s ip_hash=%s ls_request_id=%s cf_ray=%s body=%s",
+                    res.status_code,
+                    store_id,
+                    variant_id,
+                    bool(test_mode),
+                    _mask_email(body.email),
+                    (session_id[:12] + "...") if session_id else None,
+                    ip_hash,
+                    ls_request_id,
+                    cf_ray,
+                    body_preview,
+                )
+            except Exception:
+                pass
+
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=detail)
 
         data = res.json().get("data") or {}
         attrs = data.get("attributes") or {}
@@ -470,79 +527,6 @@ async def create_lemonsqueezy_checkout(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to create checkout: {str(e)}",
         )
-
-
-# ============= Restore Pro (Relink session_id) =============
-
-@router.post(
-    "/session/restore",
-    response_model=SessionRestoreResponse,
-    status_code=status.HTTP_200_OK,
-)
-async def restore_pro_session(
-    request: Request,
-    response: Response,
-    body: SessionRestoreRequest,
-    session_id_header: Optional[str] = Header(None, alias="X-Session-Id"),
-    db_session: Session = Depends(get_db),
-):
-    """
-    Relink a (possibly new) browser session_id to an existing Pro purchase.
-
-    This is a best-effort restore flow intended for:
-    - user cleared storage / changed browser
-    - user changed networks (ip_hash differs)
-    """
-    session_id = _get_session_id_from_request(
-        request=request,
-        session_id_header=session_id_header,
-        session_id_form=None,
-    )
-    _set_session_cookie(response, session_id)
-    ip_hash = IpFingerprint.get_ip_hash(request)
-
-    user = db_session.query(User).filter_by(email=body.email).first()
-    if not user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Email not found")
-
-    # Find an active pro quota for this user
-    now = datetime.utcnow()
-    pro_quota = (
-        db_session.query(UsersQuota)
-        .filter(
-            UsersQuota.user_id == user.id,
-            UsersQuota.is_pro == True,  # noqa: E712
-            UsersQuota.pro_expiry_date != None,  # noqa: E711
-            UsersQuota.pro_expiry_date > now,
-        )
-        .order_by(UsersQuota.pro_expiry_date.desc())
-        .first()
-    )
-    if not pro_quota:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No active Pro entitlement for this email")
-
-    # Ensure this session_id has a quota row and mark it pro with the same expiry
-    target = db_session.query(UsersQuota).filter_by(session_id=session_id).order_by(UsersQuota.updated_at.desc()).first()
-    if not target:
-        target = UsersQuota(
-            id=str(uuid.uuid4()),
-            user_id=user.id,
-            ip_hash=ip_hash,
-            session_id=session_id,
-            is_pro=True,
-            pro_expiry_date=pro_quota.pro_expiry_date,
-        )
-        db_session.add(target)
-    else:
-        target.user_id = user.id
-        if not target.ip_hash:
-            target.ip_hash = ip_hash
-        target.is_pro = True
-        target.pro_expiry_date = pro_quota.pro_expiry_date
-
-    db_session.commit()
-
-    return SessionRestoreResponse(success=True, session_id=session_id, pro_expiry_date=pro_quota.pro_expiry_date)
 
 
 # ============= Status Polling Endpoint =============
@@ -624,9 +608,9 @@ async def handle_lemonsqueezy_webhook(
         # Parse payload
         import json
         data = json.loads(payload)
-        event_name = data.get("event_name")
-        event_data = data.get("data", {}) or {}
         meta = data.get("meta", {}) or {}
+        event_name = data.get("event_name") or meta.get("event_name")
+        event_data = data.get("data", {}) or {}
 
         # Extract a stable external order id + email (best-effort; payload structures vary)
         external_id = (
@@ -642,7 +626,8 @@ async def handle_lemonsqueezy_webhook(
             or (meta.get("custom_data", {}) or {}).get("email")
         )
 
-        # Idempotently store the order event for support/audit
+        # Idempotently store the order event for support/audit (commit even if we don't activate pro)
+        order = None
         if external_id:
             order = (
                 db_session.query(Order)
@@ -653,18 +638,17 @@ async def handle_lemonsqueezy_webhook(
                 order = Order(provider="lemonsqueezy", external_id=external_id)
                 db_session.add(order)
 
-            order.event_name = event_name
+            order.event_name = str(event_name) if event_name is not None else None
             order.email = user_email
             order.raw_payload_json = payload.decode("utf-8", errors="replace")
-            order.status = (
-                OrderStatus.PAID.value
-                if event_name == "order:created"
-                else OrderStatus.UNKNOWN.value
-            )
-            db_session.flush()
+
+            paid_events = {"order_created", "order:created"}
+            order.status = OrderStatus.PAID.value if (event_name in paid_events) else OrderStatus.UNKNOWN.value
+            db_session.commit()
         
-        # Handle order:created event (successful payment)
-        if event_name == "order:created":
+        # Handle order_created event (successful payment)
+        paid_events = {"order_created", "order:created"}
+        if event_name in paid_events:
             # Best-effort mapping back to an existing free-tier user record.
             # Recommended: include `meta.custom_data.ip_hash` or `meta.custom_data.session_id`
             # when creating the LemonSqueezy checkout.
@@ -682,14 +666,8 @@ async def handle_lemonsqueezy_webhook(
                     db_session.flush()
 
             # Link order to user if possible
-            if external_id:
-                order = (
-                    db_session.query(Order)
-                    .filter_by(provider="lemonsqueezy", external_id=external_id)
-                    .first()
-                )
-                if order and user:
-                    order.user_id = user.id
+            if order and user:
+                order.user_id = user.id
 
             # Create/update quota row for this paid user (or best-effort by ip/session)
             user_quota = None

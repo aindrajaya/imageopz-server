@@ -18,8 +18,8 @@ class Settings(BaseSettings):
 
     # CORS
     # Comma-separated origins, e.g. "https://imageopz.com,https://www.imageopz.com"
-    cors_allow_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
-    cors_allow_credentials: bool = False
+    cors_allow_origins: str = "http://localhost:3000"
+    cors_allow_credentials: bool = True
 
     # Database
     database_url: str = "sqlite:///./imageopz.db"

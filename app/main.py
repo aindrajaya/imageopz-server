@@ -13,7 +13,7 @@ import logging
 
 from app.config import settings
 from app.models import db
-from app.routes import optimization, health
+from app.routes import optimization, health, session
 
 # Configure logging
 logging.basicConfig(
@@ -35,6 +35,17 @@ async def lifespan(app: FastAPI):
     # Initialize database
     db.init_db()
     logger.info("Database initialized")
+
+    # Log key routes (helps diagnose mismatched deployments / stale reloads)
+    try:
+        key_paths = {"/api/v1/checkout/lemonsqueezy", "/api/v1/session/restore", "/api/v1/webhooks/lemonsqueezy"}
+        for route in getattr(app, "routes", []):
+            path = getattr(route, "path", None)
+            methods = getattr(route, "methods", None)
+            if path in key_paths:
+                logger.info("Route registered: %s methods=%s", path, sorted(list(methods)) if methods else None)
+    except Exception:
+        pass
 
     logger.info("ImageOpz Backend Service ready")
     
@@ -64,8 +75,8 @@ def create_app() -> FastAPI:
         CORSMiddleware,
         allow_origins=settings.cors_allow_origins_list(),
         allow_credentials=settings.cors_allow_credentials,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["Content-Type", "X-Session-Id"],
     )
     
     # Add compression middleware
@@ -87,6 +98,7 @@ def create_app() -> FastAPI:
     # Include routes
     app.include_router(health.router)
     app.include_router(optimization.router)
+    app.include_router(session.router)
     
     # Root endpoint
     @app.get("/")
