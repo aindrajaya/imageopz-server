@@ -935,6 +935,21 @@
             "type": "integer",
             "title": "Credits Remaining",
             "description": "Remaining free credits (0 if exhausted; -1 if pro)"
+          },
+          "pro_tier_max_credits": {
+            "type": "integer",
+            "title": "Pro Tier Max Credits",
+            "description": "Configured pro tier credit limit"
+          },
+          "pro_credits_used": {
+            "type": "integer",
+            "title": "Pro Credits Used",
+            "description": "Credits used in pro tier window"
+          },
+          "pro_credits_remaining": {
+            "type": "integer",
+            "title": "Pro Credits Remaining",
+            "description": "Remaining pro credits (0 if exhausted; -1 if not pro)"
           }
         },
         "type": "object",
@@ -947,7 +962,10 @@
           "needs_restore",
           "credits_used",
           "free_tier_max_credits",
-          "credits_remaining"
+          "credits_remaining",
+          "pro_tier_max_credits",
+          "pro_credits_used",
+          "pro_credits_remaining"
         ],
         "title": "SessionMeResponse"
       },

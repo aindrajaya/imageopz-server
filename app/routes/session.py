@@ -107,6 +107,7 @@ async def restore_pro_session(
             session_id=session_id,
             is_pro=True,
             pro_expiry_date=pro_quota.pro_expiry_date,
+            pro_credits_used=int(getattr(pro_quota, "pro_credits_used", 0) or 0),
             pro_verified=True,
             pro_source="restore",
         )
@@ -117,6 +118,9 @@ async def restore_pro_session(
             target.ip_hash = ip_hash
         target.is_pro = True
         target.pro_expiry_date = pro_quota.pro_expiry_date
+        # Keep existing pro credit usage if any
+        if getattr(target, "pro_credits_used", None) is None:
+            target.pro_credits_used = int(getattr(pro_quota, "pro_credits_used", 0) or 0)
         target.pro_verified = True
         target.pro_source = "restore"
 
@@ -163,6 +167,7 @@ async def get_session_me(
         )
 
     credits_used = int(getattr(quota, "credits_used", 0) or 0)
+    pro_credits_used = int(getattr(quota, "pro_credits_used", 0) or 0) if quota else 0
     pro_expiry = getattr(quota, "pro_expiry_date", None)
     is_pro = bool(getattr(quota, "is_pro", False) and pro_expiry and pro_expiry > datetime.utcnow())
     pro_verified = bool(getattr(quota, "pro_verified", False)) if quota else False
@@ -171,8 +176,10 @@ async def get_session_me(
 
     if is_pro:
         credits_remaining = -1
+        pro_credits_remaining = max(0, settings.pro_tier_max_credits - pro_credits_used)
     else:
         credits_remaining = max(0, settings.free_tier_max_credits - credits_used)
+        pro_credits_remaining = -1
 
     return SessionMeResponse(
         success=True,
@@ -186,6 +193,9 @@ async def get_session_me(
         credits_used=credits_used,
         free_tier_max_credits=settings.free_tier_max_credits,
         credits_remaining=credits_remaining,
+        pro_tier_max_credits=settings.pro_tier_max_credits,
+        pro_credits_used=pro_credits_used,
+        pro_credits_remaining=pro_credits_remaining,
     )
 
 

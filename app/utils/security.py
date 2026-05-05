@@ -198,7 +198,9 @@ class QuotaManager:
     def validate_pro_tier_quota(
         file_size: int,
         files_count: int,
-        pro_expiry: Optional[datetime]
+        pro_expiry: Optional[datetime],
+        credits_used: Optional[int] = None,
+        credits_requested: Optional[int] = None,
     ) -> Tuple[bool, Optional[str]]:
         """
         Validate pro tier constraints:
@@ -214,6 +216,11 @@ class QuotaManager:
         
         if files_count > settings.pro_tier_max_bulk_images:
             return False, f"Maximum {settings.pro_tier_max_bulk_images} files per request for pro tier"
+
+        if credits_used is not None and credits_requested is not None:
+            if credits_used + credits_requested > settings.pro_tier_max_credits:
+                remaining = max(0, settings.pro_tier_max_credits - credits_used)
+                return False, f"Pro credits exceeded. Remaining credits: {remaining}"
         
         return True, None
 

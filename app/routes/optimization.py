@@ -194,6 +194,9 @@ async def optimize_images(
         effective_is_pro = bool(
             (token_is_pro and token_pro_expiry and token_pro_expiry > now) or quota_is_pro
         )
+
+        # For Pro tier, enforce credit cap (e.g. 100) across the pro window.
+        pro_credits_used = int(getattr(user_quota, "pro_credits_used", 0) or 0)
         
         # Request-level quota checks (avoid partial acceptance)
         if not effective_is_pro:
@@ -208,6 +211,17 @@ async def optimize_images(
                     status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                     detail=error_msg
                 )
+        else:
+            # Pro request-level credit check
+            is_valid, error_msg = QuotaManager.validate_pro_tier_quota(
+                file_size=0,
+                files_count=len(images),
+                pro_expiry=user_quota.pro_expiry_date,
+                credits_used=pro_credits_used,
+                credits_requested=len(images),
+            )
+            if not is_valid:
+                raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=error_msg)
 
         results = []
         
@@ -223,7 +237,7 @@ async def optimize_images(
 
                 max_size = (
                     settings.pro_tier_max_file_size
-                    if (user_quota.is_pro and user_quota.pro_expiry_date)
+                    if effective_is_pro
                     else settings.free_tier_max_file_size
                 )
 
@@ -290,7 +304,9 @@ async def optimize_images(
                     is_valid, error_msg = QuotaManager.validate_pro_tier_quota(
                         file_size,
                         len(images),
-                        user_quota.pro_expiry_date
+                        user_quota.pro_expiry_date,
+                        credits_used=pro_credits_used,
+                        credits_requested=1,
                     )
                     if not is_valid:
                         try:
@@ -353,7 +369,10 @@ async def optimize_images(
                     )
                 
                 # Update quota
-                if not effective_is_pro:
+                if effective_is_pro:
+                    user_quota.pro_credits_used = int(getattr(user_quota, "pro_credits_used", 0) or 0) + 1
+                    pro_credits_used += 1
+                else:
                     user_quota.credits_used += 1
                 
                 results.append(OptimizationResultResponse(
@@ -705,6 +724,7 @@ async def handle_lemonsqueezy_webhook(
                     session_id=session_id,
                     is_pro=True,
                     pro_expiry_date=pro_expiry,
+                    pro_credits_used=0,
                     pro_verified=True,
                     pro_source="webhook",
                 )
@@ -714,6 +734,8 @@ async def handle_lemonsqueezy_webhook(
                     user_quota.user_id = user.id
                 user_quota.is_pro = True
                 user_quota.pro_expiry_date = pro_expiry
+                # Reset pro credits window on successful purchase
+                user_quota.pro_credits_used = 0
                 user_quota.pro_verified = True
                 user_quota.pro_source = "webhook"
 

@@ -224,6 +224,9 @@ class SessionMeResponse(BaseModel):
     credits_used: int = Field(..., description="Credits used for free tier tracking")
     free_tier_max_credits: int = Field(..., description="Configured free tier credit limit")
     credits_remaining: int = Field(..., description="Remaining free credits (0 if exhausted; -1 if pro)")
+    pro_tier_max_credits: int = Field(..., description="Configured pro tier credit limit")
+    pro_credits_used: int = Field(..., description="Credits used in pro tier window")
+    pro_credits_remaining: int = Field(..., description="Remaining pro credits (0 if exhausted; -1 if not pro)")
 
 
 class SessionLogoutResponse(BaseModel):

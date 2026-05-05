@@ -67,6 +67,7 @@ class Settings(BaseSettings):
     free_tier_max_bulk_images: int = 3
     pro_tier_max_file_size: int = 50 * 1024 * 1024  # 50MB
     pro_tier_max_bulk_images: int = 30
+    pro_tier_max_credits: int = 100
 
     # File Expiry
     free_tier_expiry_days: int = 7

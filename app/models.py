@@ -69,6 +69,7 @@ class UsersQuota(Base):
     credits_used = Column(Integer, default=0)
     is_pro = Column(Boolean, default=False)
     pro_expiry_date = Column(DateTime, nullable=True)
+    pro_credits_used = Column(Integer, default=0)
     pro_verified = Column(Boolean, default=False)
     pro_source = Column(String(32), nullable=True)  # e.g. 'webhook' | 'restore' | 'unknown'
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -194,6 +195,9 @@ class Database:
                     # users_quota: add pro_verified, pro_source columns if they don't exist (SQLite supports ADD COLUMN)
                     rows = conn.exec_driver_sql("PRAGMA table_info(users_quota);").fetchall()
                     existing = {r[1] for r in rows}  # (cid, name, type, notnull, dflt_value, pk)
+                    if "pro_credits_used" not in existing:
+                        conn.exec_driver_sql("ALTER TABLE users_quota ADD COLUMN pro_credits_used INTEGER NOT NULL DEFAULT 0;")
+                        logger.info("Migrated users_quota: added pro_credits_used")
                     if "pro_verified" not in existing:
                         conn.exec_driver_sql("ALTER TABLE users_quota ADD COLUMN pro_verified BOOLEAN NOT NULL DEFAULT 0;")
                         logger.info("Migrated users_quota: added pro_verified")
