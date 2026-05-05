@@ -27,6 +27,7 @@ Meskipun *Local Storage* digunakan di klien, backend bertindak sebagai sumber ke
     *   Divalidasi menggunakan token JWT (dihasilkan setelah pembayaran sukses via LemonSqueezy).
     *   Membuka batas maksimal ukuran file menjadi **50 MB** per gambar.
     *   Batas unggahan massal ditingkatkan hingga **30 gambar** dalam satu *request*.
+    *   Session browser dipertahankan menggunakan cookie `SESSION_COOKIE_NAME` (default `imageopz_sid`) untuk mencegah kehilangan akses saat pindah jaringan.
 
 ---
 

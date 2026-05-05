@@ -27,6 +27,9 @@ Minimum:
 - `REDIS_URL=redis://127.0.0.1:6379/0` (or your managed Redis)
 - `CORS_ALLOW_ORIGINS=https://imageopz.com` (comma-separated list)
 - `LEMONSQUEEZY_SECRET=<webhook secret>` (required if you enable `/api/v1/webhooks/lemonsqueezy`)
+- `LEMONSQUEEZY_API_KEY=<api key>` (required if you enable `/api/v1/checkout/lemonsqueezy`)
+- `LEMONSQUEEZY_STORE_ID=<store id>` (required if you enable `/api/v1/checkout/lemonsqueezy` and don’t pass store_id in the request)
+- `LEMONSQUEEZY_VARIANT_ID=<variant id>` (required if you enable `/api/v1/checkout/lemonsqueezy` and don’t pass variant_id in the request)
 
 If using R2:
 

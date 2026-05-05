@@ -56,15 +56,33 @@
         "summary": "Optimize Images",
         "description": "Optimize multiple images and queue for processing.\nSupports both free and pro tier with respective quotas.\n\n**Free Tier:**\n- Max 3 images per request\n- Max 10MB per image\n- Max 3 credits total\n- 7 day expiry\n\n**Pro Tier:**\n- Max 30 images per request\n- Max 50MB per image\n- Unlimited credits (with active subscription)\n- 40 day expiry",
         "operationId": "optimize_images_api_v1_optimize_post",
+        "parameters": [
+          {
+            "name": "X-Session-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Session-Id"
+            }
+          }
+        ],
         "requestBody": {
+          "required": true,
           "content": {
             "multipart/form-data": {
               "schema": {
                 "$ref": "#/components/schemas/Body_optimize_images_api_v1_optimize_post"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "202": {
@@ -103,6 +121,126 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/checkout/lemonsqueezy": {
+      "post": {
+        "tags": [
+          "optimization"
+        ],
+        "summary": "Create Lemonsqueezy Checkout",
+        "description": "Create a hosted LemonSqueezy checkout URL.\n\nWhy server-side:\n- keeps `LEMONSQUEEZY_API_KEY` off the browser\n- calculates `ip_hash` from the request seen by the server\n- embeds `meta.custom_data` (via `checkout_data.custom`) for accurate webhook matching",
+        "operationId": "create_lemonsqueezy_checkout_api_v1_checkout_lemonsqueezy_post",
+        "parameters": [
+          {
+            "name": "X-Session-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Session-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LemonSqueezyCreateCheckoutRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LemonSqueezyCreateCheckoutResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/session/restore": {
+      "post": {
+        "tags": [
+          "optimization"
+        ],
+        "summary": "Restore Pro Session",
+        "description": "Relink a (possibly new) browser session_id to an existing Pro purchase.\n\nThis is a best-effort restore flow intended for:\n- user cleared storage / changed browser\n- user changed networks (ip_hash differs)",
+        "operationId": "restore_pro_session_api_v1_session_restore_post",
+        "parameters": [
+          {
+            "name": "X-Session-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Session-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionRestoreRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionRestoreResponse"
                 }
               }
             }
@@ -233,6 +371,17 @@
               }
             ],
             "title": "Auth Token"
+          },
+          "session_id_form": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id Form"
           }
         },
         "type": "object",
@@ -477,6 +626,132 @@
         "title": "JobStatusResponse",
         "description": "Job status polling response"
       },
+      "LemonSqueezyCreateCheckoutRequest": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "title": "Email",
+            "description": "Customer email to prefill + link purchase"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 255
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id",
+            "description": "Stable browser session identifier (stored in users_quota.session_id)"
+          },
+          "store_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Store Id",
+            "description": "LemonSqueezy store id (defaults to env LEMONSQUEEZY_STORE_ID)"
+          },
+          "variant_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Variant Id",
+            "description": "LemonSqueezy variant id (defaults to env LEMONSQUEEZY_VARIANT_ID)"
+          },
+          "redirect_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Redirect Url",
+            "description": "Override redirect URL after payment (defaults to env LEMONSQUEEZY_REDIRECT_URL)"
+          },
+          "test_mode": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Test Mode",
+            "description": "Whether to create this checkout in test mode (defaults to env LEMONSQUEEZY_TEST_MODE)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "email"
+        ],
+        "title": "LemonSqueezyCreateCheckoutRequest",
+        "description": "Create a LemonSqueezy checkout URL server-side.\n`session_id` should be a stable browser identifier (e.g. UUIDv4 stored in localStorage/cookie)."
+      },
+      "LemonSqueezyCreateCheckoutResponse": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success",
+            "description": "Whether checkout was created successfully",
+            "default": true
+          },
+          "checkout_id": {
+            "type": "string",
+            "title": "Checkout Id",
+            "description": "LemonSqueezy checkout id"
+          },
+          "checkout_url": {
+            "type": "string",
+            "title": "Checkout Url",
+            "description": "Hosted checkout URL to redirect the user to"
+          },
+          "ip_hash": {
+            "type": "string",
+            "title": "Ip Hash",
+            "description": "Server-calculated IP hash (stored in users_quota.ip_hash)"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id",
+            "description": "Session id used for matching in webhook"
+          },
+          "provider": {
+            "type": "string",
+            "title": "Provider",
+            "description": "Payment provider identifier",
+            "default": "lemonsqueezy"
+          }
+        },
+        "type": "object",
+        "required": [
+          "checkout_id",
+          "checkout_url",
+          "ip_hash"
+        ],
+        "title": "LemonSqueezyCreateCheckoutResponse"
+      },
       "OptimizationResultResponse": {
         "properties": {
           "job_id": {
@@ -502,6 +777,47 @@
         ],
         "title": "OptimizationResultResponse",
         "description": "Result of a single image optimization"
+      },
+      "SessionRestoreRequest": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "title": "Email",
+            "description": "Email that was used to purchase Pro"
+          }
+        },
+        "type": "object",
+        "required": [
+          "email"
+        ],
+        "title": "SessionRestoreRequest"
+      },
+      "SessionRestoreResponse": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success",
+            "description": "Whether restore succeeded",
+            "default": true
+          },
+          "session_id": {
+            "type": "string",
+            "title": "Session Id",
+            "description": "Session id now bound to Pro"
+          },
+          "pro_expiry_date": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Pro Expiry Date",
+            "description": "Pro expiry date"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_id",
+          "pro_expiry_date"
+        ],
+        "title": "SessionRestoreResponse"
       },
       "ValidationError": {
         "properties": {
