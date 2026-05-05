@@ -3,13 +3,14 @@ API routes for image optimization endpoints.
 Handles bulk uploads, job status polling, and webhook processing.
 """
 
-from fastapi import APIRouter, HTTPException, status, Request, UploadFile, File, Form, Depends
+from fastapi import APIRouter, HTTPException, status, Request, Response, UploadFile, File, Form, Depends, Header
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from datetime import datetime, timedelta
 import uuid
 import os
 import logging
+import httpx
 
 from app.models import Job, JobStatus, UsersQuota, User, Order, OrderStatus, db, get_db
 from app.schemas import (
@@ -19,6 +20,10 @@ from app.schemas import (
     JobStatusResponse,
     ErrorResponse,
     LemonSqueezyWebhookPayload,
+    LemonSqueezyCreateCheckoutRequest,
+    LemonSqueezyCreateCheckoutResponse,
+    SessionRestoreRequest,
+    SessionRestoreResponse,
 )
 from app.utils.security import (
     SecurityValidator,
@@ -32,6 +37,29 @@ from app.config import settings
 
 router = APIRouter(prefix="/api/v1", tags=["optimization"])
 logger = logging.getLogger("imageopz.routes.optimization")
+
+def _get_session_id_from_request(
+    *,
+    request: Request,
+    session_id_header: Optional[str],
+    session_id_form: Optional[str],
+) -> str:
+    cookie_name = settings.session_cookie_name
+    session_id = (session_id_form or session_id_header or request.cookies.get(cookie_name) or "").strip()
+    return session_id or str(uuid.uuid4())
+
+def _set_session_cookie(response: Response, session_id: str) -> None:
+    max_age_seconds = int(settings.session_cookie_max_age_days) * 24 * 60 * 60
+    # SameSite=Lax so it survives normal navigations; Secure should be true behind HTTPS (prod).
+    response.set_cookie(
+        key=settings.session_cookie_name,
+        value=session_id,
+        max_age=max_age_seconds,
+        httponly=False,  # frontend may need to read it; can be true if you only use header
+        samesite="lax",
+        secure=(settings.environment == "production"),
+        path="/",
+    )
 
 
 # ============= Optimize Endpoint =============
@@ -49,8 +77,11 @@ logger = logging.getLogger("imageopz.routes.optimization")
 )
 async def optimize_images(
     request: Request,
+    response: Response,
     images: List[UploadFile] = File(...),
     auth_token: Optional[str] = Form(None),
+    session_id_header: Optional[str] = Header(None, alias="X-Session-Id"),
+    session_id_form: Optional[str] = Form(None),
     db_session: Session = Depends(get_db)
 ):
     """
@@ -72,6 +103,13 @@ async def optimize_images(
     try:
         os.makedirs(settings.upload_dir, exist_ok=True)
 
+        session_id = _get_session_id_from_request(
+            request=request,
+            session_id_header=session_id_header,
+            session_id_form=session_id_form,
+        )
+        _set_session_cookie(response, session_id)
+
         # Get user identifier
         ip_hash = IpFingerprint.get_ip_hash(request)
         
@@ -86,16 +124,24 @@ async def optimize_images(
                 pro_expiry = datetime.fromisoformat(token_data["pro_expiry"])
         
         # Get or create user quota record
-        user_quota = (
-            db_session.query(UsersQuota)
-            .filter(UsersQuota.ip_hash == ip_hash)
-            .order_by(UsersQuota.updated_at.desc())
-            .first()
-        )
+        q = db_session.query(UsersQuota)
+        if session_id:
+            user_quota = (
+                q.filter(UsersQuota.session_id == session_id)
+                .order_by(UsersQuota.updated_at.desc())
+                .first()
+            )
+        else:
+            user_quota = (
+                q.filter(UsersQuota.ip_hash == ip_hash)
+                .order_by(UsersQuota.updated_at.desc())
+                .first()
+            )
         if not user_quota:
             user_quota = UsersQuota(
                 id=str(uuid.uuid4()),
                 ip_hash=ip_hash,
+                session_id=session_id,
                 is_pro=is_pro,
                 pro_expiry_date=pro_expiry
             )
@@ -104,7 +150,22 @@ async def optimize_images(
         elif is_pro and pro_expiry:
             user_quota.is_pro = True
             user_quota.pro_expiry_date = pro_expiry
+            if session_id and not user_quota.session_id:
+                user_quota.session_id = session_id
+            if ip_hash and not user_quota.ip_hash:
+                user_quota.ip_hash = ip_hash
             db_session.commit()
+        else:
+            # Best-effort backfill identifiers for matching (webhook may carry session_id/ip_hash)
+            updated = False
+            if session_id and not user_quota.session_id:
+                user_quota.session_id = session_id
+                updated = True
+            if ip_hash and not user_quota.ip_hash:
+                user_quota.ip_hash = ip_hash
+                updated = True
+            if updated:
+                db_session.commit()
         
         # Request-level quota checks (avoid partial acceptance)
         if not is_pro:
@@ -238,7 +299,7 @@ async def optimize_images(
                 
                 job = Job(
                     id=job_id,
-                    session_id=ip_hash,
+                    session_id=session_id or ip_hash,
                     user_quota_id=user_quota.id,
                     status=JobStatus.PENDING,
                     original_filename=image_file.filename,
@@ -297,6 +358,191 @@ async def optimize_images(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Internal server error: {str(e)}"
         )
+
+
+# ============= LemonSqueezy Checkout (Server-side) =============
+
+@router.post(
+    "/checkout/lemonsqueezy",
+    response_model=LemonSqueezyCreateCheckoutResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_lemonsqueezy_checkout(
+    request: Request,
+    response: Response,
+    body: LemonSqueezyCreateCheckoutRequest,
+    session_id_header: Optional[str] = Header(None, alias="X-Session-Id"),
+):
+    """
+    Create a hosted LemonSqueezy checkout URL.
+
+    Why server-side:
+    - keeps `LEMONSQUEEZY_API_KEY` off the browser
+    - calculates `ip_hash` from the request seen by the server
+    - embeds `meta.custom_data` (via `checkout_data.custom`) for accurate webhook matching
+    """
+    if not settings.lemonsqueezy_api_key:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="LEMONSQUEEZY_API_KEY is not configured",
+        )
+
+    store_id = (body.store_id or settings.lemonsqueezy_store_id or "").strip()
+    variant_id = (body.variant_id or settings.lemonsqueezy_variant_id or "").strip()
+    if not store_id or not variant_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="store_id and variant_id are required (or set LEMONSQUEEZY_STORE_ID/LEMONSQUEEZY_VARIANT_ID)",
+        )
+
+    redirect_url = (body.redirect_url or settings.lemonsqueezy_redirect_url or "").strip() or None
+    test_mode = body.test_mode if body.test_mode is not None else settings.lemonsqueezy_test_mode
+
+    session_id = (body.session_id or session_id_header or request.cookies.get(settings.session_cookie_name) or "").strip() or None
+    if not session_id:
+        session_id = str(uuid.uuid4())
+    _set_session_cookie(response, session_id)
+    ip_hash = IpFingerprint.get_ip_hash(request)
+
+    lemonsqueezy_payload: dict = {
+        "data": {
+            "type": "checkouts",
+            "attributes": {
+                "checkout_data": {
+                    "email": body.email,
+                    "custom": {
+                        "email": body.email,
+                        "ip_hash": ip_hash,
+                        "session_id": session_id,
+                    },
+                },
+                "test_mode": bool(test_mode),
+            },
+            "relationships": {
+                "store": {"data": {"type": "stores", "id": str(store_id)}},
+                "variant": {"data": {"type": "variants", "id": str(variant_id)}},
+            },
+        }
+    }
+
+    if redirect_url:
+        lemonsqueezy_payload["data"]["attributes"]["product_options"] = {"redirect_url": redirect_url}
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            res = await client.post(
+                "https://api.lemonsqueezy.com/v1/checkouts",
+                headers={
+                    "Accept": "application/vnd.api+json",
+                    "Content-Type": "application/vnd.api+json",
+                    "Authorization": f"Bearer {settings.lemonsqueezy_api_key}",
+                },
+                json=lemonsqueezy_payload,
+            )
+        if res.status_code >= 400:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"LemonSqueezy API error: {res.status_code} {res.text}",
+            )
+
+        data = res.json().get("data") or {}
+        attrs = data.get("attributes") or {}
+        checkout_url = attrs.get("url")
+        checkout_id = data.get("id")
+        if not checkout_url or not checkout_id:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="LemonSqueezy response missing checkout url/id",
+            )
+
+        return LemonSqueezyCreateCheckoutResponse(
+            success=True,
+            checkout_id=str(checkout_id),
+            checkout_url=str(checkout_url),
+            ip_hash=ip_hash,
+            session_id=session_id,
+            provider="lemonsqueezy",
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create checkout: {str(e)}",
+        )
+
+
+# ============= Restore Pro (Relink session_id) =============
+
+@router.post(
+    "/session/restore",
+    response_model=SessionRestoreResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def restore_pro_session(
+    request: Request,
+    response: Response,
+    body: SessionRestoreRequest,
+    session_id_header: Optional[str] = Header(None, alias="X-Session-Id"),
+    db_session: Session = Depends(get_db),
+):
+    """
+    Relink a (possibly new) browser session_id to an existing Pro purchase.
+
+    This is a best-effort restore flow intended for:
+    - user cleared storage / changed browser
+    - user changed networks (ip_hash differs)
+    """
+    session_id = _get_session_id_from_request(
+        request=request,
+        session_id_header=session_id_header,
+        session_id_form=None,
+    )
+    _set_session_cookie(response, session_id)
+    ip_hash = IpFingerprint.get_ip_hash(request)
+
+    user = db_session.query(User).filter_by(email=body.email).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Email not found")
+
+    # Find an active pro quota for this user
+    now = datetime.utcnow()
+    pro_quota = (
+        db_session.query(UsersQuota)
+        .filter(
+            UsersQuota.user_id == user.id,
+            UsersQuota.is_pro == True,  # noqa: E712
+            UsersQuota.pro_expiry_date != None,  # noqa: E711
+            UsersQuota.pro_expiry_date > now,
+        )
+        .order_by(UsersQuota.pro_expiry_date.desc())
+        .first()
+    )
+    if not pro_quota:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No active Pro entitlement for this email")
+
+    # Ensure this session_id has a quota row and mark it pro with the same expiry
+    target = db_session.query(UsersQuota).filter_by(session_id=session_id).order_by(UsersQuota.updated_at.desc()).first()
+    if not target:
+        target = UsersQuota(
+            id=str(uuid.uuid4()),
+            user_id=user.id,
+            ip_hash=ip_hash,
+            session_id=session_id,
+            is_pro=True,
+            pro_expiry_date=pro_quota.pro_expiry_date,
+        )
+        db_session.add(target)
+    else:
+        target.user_id = user.id
+        if not target.ip_hash:
+            target.ip_hash = ip_hash
+        target.is_pro = True
+        target.pro_expiry_date = pro_quota.pro_expiry_date
+
+    db_session.commit()
+
+    return SessionRestoreResponse(success=True, session_id=session_id, pro_expiry_date=pro_quota.pro_expiry_date)
 
 
 # ============= Status Polling Endpoint =============
