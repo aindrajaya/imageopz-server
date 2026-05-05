@@ -198,66 +198,6 @@
         }
       }
     },
-    "/api/v1/session/restore": {
-      "post": {
-        "tags": [
-          "optimization"
-        ],
-        "summary": "Restore Pro Session",
-        "description": "Relink a (possibly new) browser session_id to an existing Pro purchase.\n\nThis is a best-effort restore flow intended for:\n- user cleared storage / changed browser\n- user changed networks (ip_hash differs)",
-        "operationId": "restore_pro_session_api_v1_session_restore_post",
-        "parameters": [
-          {
-            "name": "X-Session-Id",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Session-Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SessionRestoreRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SessionRestoreResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/v1/status/{job_id}": {
       "get": {
         "tags": [
@@ -325,6 +265,66 @@
             "content": {
               "application/json": {
                 "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/session/restore": {
+      "post": {
+        "tags": [
+          "session"
+        ],
+        "summary": "Restore Pro Session",
+        "description": "Restore/Relink a browser `session_id` to an existing Pro entitlement.\n\n- UI calls this when user clicks \"Restore Pro\" and provides the purchase email.\n- Backend finds an active Pro UsersQuota for that email and binds it to the current `session_id`.",
+        "operationId": "restore_pro_session_api_v1_session_restore_post",
+        "parameters": [
+          {
+            "name": "X-Session-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Session-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionRestoreRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionRestoreResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
