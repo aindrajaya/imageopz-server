@@ -43,6 +43,11 @@ def test_env(tmp_path_factory):
     os.environ["LEMONSQUEEZY_STORE_ID"] = ""
     os.environ["LEMONSQUEEZY_VARIANT_ID"] = ""
 
+    # Supabase auth defaults for tests (individual tests may override/mok)
+    os.environ["SUPABASE_JWKS_URL"] = "http://example.invalid/jwks"
+    os.environ["SUPABASE_JWT_ISSUER"] = "https://supabase.test/auth/v1"
+    os.environ["SUPABASE_JWT_AUDIENCE"] = "authenticated"
+
     yield {"tmp_dir": tmp_dir, "db_path": db_path, "upload_dir": upload_dir}
 
 
