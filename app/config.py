@@ -49,6 +49,19 @@ class Settings(BaseSettings):
     lemonsqueezy_variant_id: Optional[str] = None
     lemonsqueezy_redirect_url: Optional[str] = None
     lemonsqueezy_test_mode: bool = False
+    checkout_intent_ttl_minutes: int = 15
+    activation_pending_retry_ms: int = 1500
+
+    # Supabase Auth (optional)
+    supabase_jwks_url: Optional[str] = None
+    supabase_jwt_issuer: Optional[str] = None
+    supabase_jwt_audience: Optional[str] = None
+    supabase_jwks_cache_ttl_seconds: int = 3600
+    # Optional fallback verification via Supabase Auth server (needed for HS256 legacy signing).
+    # Example: https://<project-ref>.supabase.co/auth/v1
+    supabase_auth_url: Optional[str] = None
+    # Safe to use publishable/anon key here; required by /auth/v1/user endpoint.
+    supabase_anon_key: Optional[str] = None
 
     # Resend (Email notifications)
     resend_api_key: Optional[str] = None
