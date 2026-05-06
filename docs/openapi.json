@@ -72,6 +72,22 @@
               ],
               "title": "X-Session-Id"
             }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
           }
         ],
         "requestBody": {
@@ -162,6 +178,22 @@
               ],
               "title": "X-Session-Id"
             }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
           }
         ],
         "requestBody": {
@@ -214,6 +246,22 @@
             "schema": {
               "type": "string",
               "title": "Job Id"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
             }
           }
         ],
@@ -295,6 +343,22 @@
               ],
               "title": "X-Session-Id"
             }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
           }
         ],
         "requestBody": {
@@ -354,6 +418,88 @@
                 }
               ],
               "title": "X-Session-Id"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionMeResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/session/reconcile": {
+      "post": {
+        "tags": [
+          "session"
+        ],
+        "summary": "Reconcile Session",
+        "description": "Best-effort reconciliation hook for the frontend after returning from checkout.\n- Does not require login.\n- Attempts to rehydrate Pro access for the current browser session based on recent intents/webhooks.",
+        "operationId": "reconcile_session_api_v1_session_reconcile_post",
+        "parameters": [
+          {
+            "name": "X-Session-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Session-Id"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
             }
           }
         ],
@@ -888,6 +1034,35 @@
             "title": "Ip Hash",
             "description": "Server-side IP hash for this request"
           },
+          "is_authenticated": {
+            "type": "boolean",
+            "title": "Is Authenticated",
+            "description": "Whether Supabase JWT is present and valid"
+          },
+          "supabase_user_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Supabase User Id",
+            "description": "Supabase user id (JWT sub) when authenticated"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email",
+            "description": "User email when known (token or linked user record)"
+          },
           "is_pro": {
             "type": "boolean",
             "title": "Is Pro",
@@ -914,7 +1089,7 @@
           "pro_source": {
             "type": "string",
             "title": "Pro Source",
-            "description": "How Pro was linked: webhook|restore|checkout|unknown|none"
+            "description": "How Pro was determined: account|session|webhook_session|restore|ip_fallback|unknown|none"
           },
           "needs_restore": {
             "type": "boolean",
@@ -950,12 +1125,25 @@
             "type": "integer",
             "title": "Pro Credits Remaining",
             "description": "Remaining pro credits (0 if exhausted; -1 if not pro)"
+          },
+          "activation_pending": {
+            "type": "boolean",
+            "title": "Activation Pending",
+            "description": "Guest-only UX hint: checkout was started recently and Pro activation may be pending (wait + retry)",
+            "default": false
+          },
+          "activation_retry_after_ms": {
+            "type": "integer",
+            "title": "Activation Retry After Ms",
+            "description": "When activation_pending=true, recommended retry delay in ms",
+            "default": 0
           }
         },
         "type": "object",
         "required": [
           "session_id",
           "ip_hash",
+          "is_authenticated",
           "is_pro",
           "pro_verified",
           "pro_source",
