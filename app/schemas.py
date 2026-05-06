@@ -216,10 +216,16 @@ class SessionMeResponse(BaseModel):
     success: bool = Field(True, description="Whether lookup succeeded")
     session_id: str = Field(..., description="Current session id (cookie/header)")
     ip_hash: str = Field(..., description="Server-side IP hash for this request")
+    is_authenticated: bool = Field(..., description="Whether Supabase JWT is present and valid")
+    supabase_user_id: Optional[str] = Field(None, description="Supabase user id (JWT sub) when authenticated")
+    email: Optional[str] = Field(None, description="User email when known (token or linked user record)")
     is_pro: bool = Field(..., description="Whether this session currently has active Pro")
     pro_expiry_date: Optional[datetime] = Field(None, description="Pro expiry date (if pro)")
     pro_verified: bool = Field(..., description="Whether Pro is verified/linked for this session")
-    pro_source: str = Field(..., description="How Pro was linked: webhook|restore|checkout|unknown|none")
+    pro_source: str = Field(
+        ...,
+        description="How Pro was determined: account|session|webhook_session|restore|ip_fallback|unknown|none",
+    )
     needs_restore: bool = Field(..., description="UI hint: Pro detected but not verified for this session")
     credits_used: int = Field(..., description="Credits used for free tier tracking")
     free_tier_max_credits: int = Field(..., description="Configured free tier credit limit")
@@ -227,6 +233,14 @@ class SessionMeResponse(BaseModel):
     pro_tier_max_credits: int = Field(..., description="Configured pro tier credit limit")
     pro_credits_used: int = Field(..., description="Credits used in pro tier window")
     pro_credits_remaining: int = Field(..., description="Remaining pro credits (0 if exhausted; -1 if not pro)")
+    activation_pending: bool = Field(
+        False,
+        description="Guest-only UX hint: checkout was started recently and Pro activation may be pending (wait + retry)",
+    )
+    activation_retry_after_ms: int = Field(
+        0,
+        description="When activation_pending=true, recommended retry delay in ms",
+    )
 
 
 class SessionLogoutResponse(BaseModel):
