@@ -37,6 +37,11 @@ class OrderStatus(str, enum.Enum):
     CANCELLED = "cancelled"
     UNKNOWN = "unknown"
 
+class CheckoutIntentStatus(str, enum.Enum):
+    CREATED = "created"      # checkout created (not yet confirmed paid)
+    PAID = "paid"            # payment confirmed (webhook or reconcile)
+    EXPIRED = "expired"      # intent expired before payment confirmation
+
 
 class User(Base):
     """
@@ -47,11 +52,13 @@ class User(Base):
 
     id = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
     email = Column(String(320), unique=True, index=True, nullable=False)
+    supabase_user_id = Column(String(128), unique=False, index=True, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     __table_args__ = (
         Index("idx_user_email", "email"),
+        Index("idx_users_supabase_user_id", "supabase_user_id"),
     )
 
 
@@ -107,6 +114,38 @@ class Order(Base):
         Index("idx_orders_provider_external_id", "provider", "external_id"),
         Index("idx_orders_user_id", "user_id"),
         Index("idx_orders_email", "email"),
+    )
+
+class CheckoutIntent(Base):
+    """
+    Tracks a short-lived checkout "intent" so we can:
+    - show activation pending state (frontend UX)
+    - reconcile/rehydrate Pro to a new session_id if the browser/session changes
+    - provide a server-side join key between checkout initiation and webhook activation
+    """
+    __tablename__ = "checkout_intents"
+
+    id = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    provider = Column(String(32), index=True, nullable=False)  # 'lemonsqueezy'
+    checkout_id = Column(String(128), index=True, nullable=True)  # provider checkout id (if known)
+
+    email = Column(String(320), index=True, nullable=True)
+    ip_hash = Column(String(255), index=True, nullable=True)
+    session_id = Column(String(255), index=True, nullable=True)
+
+    status = Column(String(32), default=CheckoutIntentStatus.CREATED.value, index=True)
+    order_external_id = Column(String(128), index=True, nullable=True)  # provider order id
+
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    expires_at = Column(DateTime, index=True, nullable=True)
+    paid_at = Column(DateTime, index=True, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("provider", "checkout_id", name="uq_checkout_intents_provider_checkout_id"),
+        Index("idx_checkout_intents_session_status", "session_id", "status"),
+        Index("idx_checkout_intents_ip_status", "ip_hash", "status"),
+        Index("idx_checkout_intents_email_status", "email", "status"),
     )
 
 
@@ -192,6 +231,21 @@ class Database:
         if "sqlite" in settings.database_url:
             try:
                 with self.engine.connect() as conn:
+                    # users: add supabase_user_id + unique index if missing
+                    user_rows = conn.exec_driver_sql("PRAGMA table_info(users);").fetchall()
+                    user_existing = {r[1] for r in user_rows}
+                    if "supabase_user_id" not in user_existing:
+                        conn.exec_driver_sql("ALTER TABLE users ADD COLUMN supabase_user_id VARCHAR(128);")
+                        logger.info("Migrated users: added supabase_user_id")
+                    # Unique index. SQLite allows multiple NULLs even without partial index.
+                    try:
+                        conn.exec_driver_sql(
+                            "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_supabase_user_id_unique ON users(supabase_user_id);"
+                        )
+                    except Exception:
+                        # Fallback: ignore if index cannot be created (should be rare).
+                        logger.exception("Failed to create unique index for users.supabase_user_id")
+
                     # users_quota: add pro_verified, pro_source columns if they don't exist (SQLite supports ADD COLUMN)
                     rows = conn.exec_driver_sql("PRAGMA table_info(users_quota);").fetchall()
                     existing = {r[1] for r in rows}  # (cid, name, type, notnull, dflt_value, pk)
