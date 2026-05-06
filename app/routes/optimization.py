@@ -12,7 +12,18 @@ import os
 import logging
 import httpx
 
-from app.models import Job, JobStatus, UsersQuota, User, Order, OrderStatus, db, get_db
+from app.models import (
+    Job,
+    JobStatus,
+    UsersQuota,
+    User,
+    Order,
+    OrderStatus,
+    CheckoutIntent,
+    CheckoutIntentStatus,
+    db,
+    get_db,
+)
 from app.schemas import (
     BulkOptimizeRequest,
     BulkOptimizeResponse,
@@ -30,6 +41,8 @@ from app.utils.security import (
     JWTHandler,
     WebhookValidator
 )
+from app.utils.auth_deps import get_optional_supabase_identity
+from app.utils.supabase_auth import SupabaseIdentity
 from app.workers.job_worker import job_queue
 from app.config import settings
 
@@ -91,6 +104,7 @@ async def optimize_images(
     auth_token: Optional[str] = Form(None),
     session_id_header: Optional[str] = Header(None, alias="X-Session-Id"),
     session_id_form: Optional[str] = Form(None),
+    identity: Optional[SupabaseIdentity] = Depends(get_optional_supabase_identity),
     db_session: Session = Depends(get_db)
 ):
     """
@@ -136,29 +150,57 @@ async def optimize_images(
                     token_is_pro = False
                     token_pro_expiry = None
         
+        # If authenticated, ensure User exists and use user-based quota.
+        user: Optional[User] = None
+        if identity:
+            user = db_session.query(User).filter_by(supabase_user_id=identity.sub).first()
+            if not user:
+                if not identity.email:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Supabase token missing email claim; cannot create user record",
+                    )
+                # Best-effort link by email first
+                user = db_session.query(User).filter_by(email=identity.email).first()
+                if user and user.supabase_user_id and user.supabase_user_id != identity.sub:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="Email is already linked to another Supabase user id",
+                    )
+                if user:
+                    user.supabase_user_id = identity.sub
+                else:
+                    user = User(email=identity.email, supabase_user_id=identity.sub)
+                    db_session.add(user)
+                db_session.flush()
+
         # Get or create user quota record
         q = db_session.query(UsersQuota)
-        if session_id:
+        if user:
+            user_quota = (
+                q.filter(UsersQuota.user_id == user.id)
+                .order_by(UsersQuota.updated_at.desc())
+                .first()
+            )
+        elif session_id:
             user_quota = (
                 q.filter(UsersQuota.session_id == session_id)
                 .order_by(UsersQuota.updated_at.desc())
                 .first()
             )
         else:
-            user_quota = (
-                q.filter(UsersQuota.ip_hash == ip_hash)
-                .order_by(UsersQuota.updated_at.desc())
-                .first()
-            )
+            # Guest matching should always have a session_id (cookie/header); fallback to new session id earlier.
+            user_quota = None
         if not user_quota:
             user_quota = UsersQuota(
                 id=str(uuid.uuid4()),
+                user_id=user.id if user else None,
                 ip_hash=ip_hash,
                 session_id=session_id,
                 is_pro=token_is_pro,
                 pro_expiry_date=token_pro_expiry,
                 pro_verified=bool(token_is_pro and token_pro_expiry),
-                pro_source="token" if (token_is_pro and token_pro_expiry) else "none",
+                pro_source="webhook_session" if (token_is_pro and token_pro_expiry) else "none",
             )
             db_session.add(user_quota)
             db_session.commit()
@@ -166,11 +208,13 @@ async def optimize_images(
             user_quota.is_pro = True
             user_quota.pro_expiry_date = token_pro_expiry
             user_quota.pro_verified = True
-            user_quota.pro_source = "token"
+            user_quota.pro_source = "webhook_session"
             if session_id and not user_quota.session_id:
                 user_quota.session_id = session_id
             if ip_hash and not user_quota.ip_hash:
                 user_quota.ip_hash = ip_hash
+            if user and not user_quota.user_id:
+                user_quota.user_id = user.id
             db_session.commit()
         else:
             # Best-effort backfill identifiers for matching (webhook may carry session_id/ip_hash)
@@ -181,8 +225,72 @@ async def optimize_images(
             if ip_hash and not user_quota.ip_hash:
                 user_quota.ip_hash = ip_hash
                 updated = True
+            if user and not user_quota.user_id:
+                user_quota.user_id = user.id
+                updated = True
             if updated:
                 db_session.commit()
+
+        # Guest-only: attempt to "rehydrate" Pro from a recently-paid checkout intent.
+        # This handles cases where `session_id` changes between checkout -> post-purchase optimize,
+        # but webhook already activated Pro for the purchase email.
+        if not identity:
+            try:
+                now = datetime.utcnow()
+                paid_intent = (
+                    db_session.query(CheckoutIntent)
+                    .filter(
+                        CheckoutIntent.provider == "lemonsqueezy",
+                        CheckoutIntent.status == CheckoutIntentStatus.PAID.value,
+                    )
+                    # IMPORTANT: paid intent rehydration must be session_id-only (NOT ip_hash),
+                    # otherwise other browsers/incognito on the same network could inherit Pro.
+                    .filter(CheckoutIntent.session_id == session_id)
+                    .order_by(CheckoutIntent.paid_at.desc().nullslast(), CheckoutIntent.created_at.desc())
+                    .first()
+                )
+                if paid_intent and paid_intent.email and not (
+                    user_quota.is_pro
+                    and user_quota.pro_expiry_date is not None
+                    and user_quota.pro_expiry_date > now
+                ):
+                    paid_user = db_session.query(User).filter_by(email=paid_intent.email).first()
+                    if paid_user:
+                        pro_quota = (
+                            db_session.query(UsersQuota)
+                            .filter(
+                                UsersQuota.user_id == paid_user.id,
+                                UsersQuota.is_pro == True,  # noqa: E712
+                                UsersQuota.pro_expiry_date != None,  # noqa: E711
+                                UsersQuota.pro_expiry_date > now,
+                            )
+                            .order_by(UsersQuota.pro_expiry_date.desc())
+                            .first()
+                        )
+                        if pro_quota and pro_quota.pro_expiry_date:
+                            user_quota.user_id = paid_user.id
+                            user_quota.is_pro = True
+                            user_quota.pro_expiry_date = pro_quota.pro_expiry_date
+                            user_quota.pro_verified = True
+                            user_quota.pro_source = "session"
+                            if not user_quota.session_id:
+                                user_quota.session_id = session_id
+                            if not user_quota.ip_hash:
+                                user_quota.ip_hash = ip_hash
+                            if getattr(user_quota, "pro_credits_used", None) is None:
+                                user_quota.pro_credits_used = int(getattr(pro_quota, "pro_credits_used", 0) or 0)
+                            db_session.commit()
+                            logger.info(
+                                "Rehydrated Pro from paid intent. email=%s session_id=%s",
+                                _mask_email(paid_intent.email),
+                                session_id,
+                            )
+            except Exception:
+                # best-effort only
+                try:
+                    db_session.rollback()
+                except Exception:
+                    pass
 
         # Determine effective pro status (webhook-activated quota should work without auth_token)
         now = datetime.utcnow()
@@ -197,6 +305,34 @@ async def optimize_images(
 
         # For Pro tier, enforce credit cap (e.g. 100) across the pro window.
         pro_credits_used = int(getattr(user_quota, "pro_credits_used", 0) or 0)
+
+        # If user likely just completed checkout but webhook hasn't activated Pro yet, return retryable signal.
+        if (not effective_is_pro) and (not identity) and len(images) > settings.free_tier_max_bulk_images:
+            try:
+                pending = (
+                    db_session.query(CheckoutIntent)
+                    .filter(
+                        CheckoutIntent.provider == "lemonsqueezy",
+                        CheckoutIntent.status == CheckoutIntentStatus.CREATED.value,
+                        CheckoutIntent.expires_at != None,  # noqa: E711
+                        CheckoutIntent.expires_at > now,
+                    )
+                    .filter((CheckoutIntent.session_id == session_id) | (CheckoutIntent.ip_hash == ip_hash))
+                    .order_by(CheckoutIntent.created_at.desc())
+                    .first()
+                )
+                if pending:
+                    from fastapi.responses import JSONResponse
+                    return JSONResponse(
+                        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                        content=ErrorResponse(
+                            error="ACTIVATION_PENDING",
+                            message="Checkout started recently; Pro activation may still be processing. Please retry shortly.",
+                            details={"retry_after_ms": int(settings.activation_pending_retry_ms or 1500)},
+                        ).model_dump(),
+                    )
+            except Exception:
+                pass
         
         # Request-level quota checks (avoid partial acceptance)
         if not effective_is_pro:
@@ -222,8 +358,12 @@ async def optimize_images(
             )
             if not is_valid:
                 raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=error_msg)
+            # Reserve pro credits upfront (so bulk requests behave atomically).
+            user_quota.pro_credits_used = pro_credits_used + len(images)
+            pro_credits_used = user_quota.pro_credits_used
 
         results = []
+        jobs_to_enqueue: list[tuple[str, str]] = []
         
         # Process each image
         for image_file in images:
@@ -301,12 +441,11 @@ async def optimize_images(
                 
                 # Check quotas
                 if effective_is_pro and user_quota.pro_expiry_date:
+                    # Pro credits are reserved upfront at request-level; here we only validate per-file constraints.
                     is_valid, error_msg = QuotaManager.validate_pro_tier_quota(
                         file_size,
                         len(images),
                         user_quota.pro_expiry_date,
-                        credits_used=pro_credits_used,
-                        credits_requested=1,
                     )
                     if not is_valid:
                         try:
@@ -356,23 +495,10 @@ async def optimize_images(
                 
                 db_session.add(job)
                 db_session.flush()
+                jobs_to_enqueue.append((job_id, upload_path))
                 
-                # Enqueue job
-                if not job_queue.enqueue_job(job_id):
-                    try:
-                        os.remove(upload_path)
-                    except Exception:
-                        pass
-                    raise HTTPException(
-                        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                        detail="Job queue unavailable (Redis not connected)"
-                    )
-                
-                # Update quota
-                if effective_is_pro:
-                    user_quota.pro_credits_used = int(getattr(user_quota, "pro_credits_used", 0) or 0) + 1
-                    pro_credits_used += 1
-                else:
+                # Update quota (free tier increments per image; pro credits reserved upfront above)
+                if not effective_is_pro:
                     user_quota.credits_used += 1
                 
                 results.append(OptimizationResultResponse(
@@ -389,7 +515,32 @@ async def optimize_images(
                     detail=f"Error processing {image_file.filename}: {str(e)}"
                 )
         
+        # Commit before enqueue to avoid race where worker dequeues before job is persisted.
         db_session.commit()
+
+        # Enqueue jobs after commit (prevents "job not found" race in worker)
+        for job_id, upload_path in jobs_to_enqueue:
+            if not job_queue.enqueue_job(job_id):
+                # Mark job failed + cleanup upload file; keep API behavior: return 503.
+                try:
+                    job = db_session.query(Job).filter_by(id=job_id).first()
+                    if job:
+                        job.status = JobStatus.FAILED
+                        job.processing_error = "Job queue unavailable (Redis not connected)"
+                        db_session.commit()
+                except Exception:
+                    try:
+                        db_session.rollback()
+                    except Exception:
+                        pass
+                try:
+                    os.remove(upload_path)
+                except Exception:
+                    pass
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Job queue unavailable (Redis not connected)"
+                )
         
         return BulkOptimizeResponse(
             success=True,
@@ -419,6 +570,8 @@ async def create_lemonsqueezy_checkout(
     response: Response,
     body: LemonSqueezyCreateCheckoutRequest,
     session_id_header: Optional[str] = Header(None, alias="X-Session-Id"),
+    identity: Optional[SupabaseIdentity] = Depends(get_optional_supabase_identity),
+    db_session: Session = Depends(get_db),
 ):
     """
     Create a hosted LemonSqueezy checkout URL.
@@ -471,6 +624,10 @@ async def create_lemonsqueezy_checkout(
             },
         }
     }
+
+    # LemonSqueezy validates custom fields strictly; omit optional fields when absent.
+    if identity and identity.sub:
+        lemonsqueezy_payload["data"]["attributes"]["checkout_data"]["custom"]["supabase_user_id"] = str(identity.sub)
 
     if redirect_url:
         lemonsqueezy_payload["data"]["attributes"]["product_options"] = {"redirect_url": redirect_url}
@@ -550,6 +707,29 @@ async def create_lemonsqueezy_checkout(
                 detail="LemonSqueezy response missing checkout url/id",
             )
 
+        # Persist a short-lived checkout intent for activation UX + relinking robustness.
+        try:
+            now = datetime.utcnow()
+            expires_at = now + timedelta(minutes=int(settings.checkout_intent_ttl_minutes))
+            intent = CheckoutIntent(
+                provider="lemonsqueezy",
+                checkout_id=str(checkout_id),
+                email=body.email,
+                ip_hash=ip_hash,
+                session_id=session_id,
+                status=CheckoutIntentStatus.CREATED.value,
+                expires_at=expires_at,
+            )
+            db_session.add(intent)
+            db_session.commit()
+        except Exception:
+            # Best-effort only; checkout itself succeeded.
+            try:
+                db_session.rollback()
+            except Exception:
+                pass
+            logger.exception("Failed to persist checkout intent")
+
         return LemonSqueezyCreateCheckoutResponse(
             success=True,
             checkout_id=str(checkout_id),
@@ -559,6 +739,10 @@ async def create_lemonsqueezy_checkout(
             provider="lemonsqueezy",
         )
     except HTTPException:
+        try:
+            db_session.rollback()
+        except Exception:
+            pass
         raise
     except Exception as e:
         raise HTTPException(
@@ -579,6 +763,7 @@ async def create_lemonsqueezy_checkout(
 )
 async def get_job_status(
     job_id: str,
+    identity: Optional[SupabaseIdentity] = Depends(get_optional_supabase_identity),
     db_session: Session = Depends(get_db)
 ):
     """
@@ -593,6 +778,15 @@ async def get_job_status(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Job {job_id} not found"
             )
+
+        # If authenticated, restrict job access to the account's quota.
+        if identity:
+            user = db_session.query(User).filter_by(supabase_user_id=identity.sub).first()
+            if not user:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Job {job_id} not found")
+            quota = db_session.query(UsersQuota).filter_by(id=job.user_quota_id).first()
+            if not quota or quota.user_id != user.id:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Job {job_id} not found")
         
         progress = job_queue.get_job_progress(job_id) if job_queue else None
 
@@ -693,6 +887,7 @@ async def handle_lemonsqueezy_webhook(
             custom = meta.get("custom_data", {}) or {}
             ip_hash = custom.get("ip_hash")
             session_id = custom.get("session_id")
+            supabase_user_id = custom.get("supabase_user_id")
 
             pro_expiry = datetime.utcnow() + timedelta(days=settings.pro_tier_expiry_days)
             user = None
@@ -703,18 +898,63 @@ async def handle_lemonsqueezy_webhook(
                     db_session.add(user)
                     db_session.flush()
 
+            # Link Supabase user id if present (idempotent). On conflict, log and continue with email-based flow.
+            if user and supabase_user_id:
+                try:
+                    existing = db_session.query(User).filter_by(supabase_user_id=str(supabase_user_id)).first()
+                    if existing and existing.id != user.id:
+                        logger.warning(
+                            "Supabase user id already linked to another user; skipping link. supabase_user_id=%s user_email=%s",
+                            supabase_user_id,
+                            user_email,
+                        )
+                    else:
+                        user.supabase_user_id = str(supabase_user_id)
+                except Exception:
+                    logger.exception("Failed linking supabase_user_id from webhook")
+
             # Link order to user if possible
             if order and user:
                 order.user_id = user.id
 
-            # Create/update quota row for this paid user (or best-effort by ip/session)
+            # Create/update quota row for this paid user.
+            # Priority:
+            # 1) user_id (email-linked user)
+            # 2) session_id (durable guest identifier)
+            # ip_hash is last-resort and should not be used to grant Pro long-term.
             user_quota = None
             if user:
                 user_quota = db_session.query(UsersQuota).filter_by(user_id=user.id).first()
-            if not user_quota and ip_hash:
-                user_quota = db_session.query(UsersQuota).filter_by(ip_hash=ip_hash).first()
             if not user_quota and session_id:
                 user_quota = db_session.query(UsersQuota).filter_by(session_id=session_id).first()
+            # ip_hash last-resort: only if a recent checkout intent exists (activation window).
+            if not user_quota and ip_hash:
+                try:
+                    now = datetime.utcnow()
+                    recent_intent = (
+                        db_session.query(CheckoutIntent)
+                        .filter(
+                            CheckoutIntent.provider == "lemonsqueezy",
+                            CheckoutIntent.status == CheckoutIntentStatus.CREATED.value,
+                            CheckoutIntent.expires_at != None,  # noqa: E711
+                            CheckoutIntent.expires_at > now,
+                            CheckoutIntent.ip_hash == ip_hash,
+                        )
+                        .order_by(CheckoutIntent.created_at.desc())
+                        .first()
+                    )
+                    if recent_intent:
+                        # Prefer binding by session_id from the intent if available.
+                        if getattr(recent_intent, "session_id", None):
+                            user_quota = (
+                                db_session.query(UsersQuota)
+                                .filter_by(session_id=recent_intent.session_id)
+                                .order_by(UsersQuota.updated_at.desc())
+                                .first()
+                            )
+                        # If we still cannot find a quota row, do NOT grant Pro purely by ip_hash.
+                except Exception:
+                    pass
 
             if not user_quota:
                 user_quota = UsersQuota(
@@ -726,7 +966,7 @@ async def handle_lemonsqueezy_webhook(
                     pro_expiry_date=pro_expiry,
                     pro_credits_used=0,
                     pro_verified=True,
-                    pro_source="webhook",
+                    pro_source="webhook_session" if session_id else "unknown",
                 )
                 db_session.add(user_quota)
             else:
@@ -737,7 +977,38 @@ async def handle_lemonsqueezy_webhook(
                 # Reset pro credits window on successful purchase
                 user_quota.pro_credits_used = 0
                 user_quota.pro_verified = True
-                user_quota.pro_source = "webhook"
+                user_quota.pro_source = "webhook_session" if session_id else "unknown"
+
+            # Mark checkout intent as paid (best-effort). This helps activation UX and session rehydration.
+            try:
+                now = datetime.utcnow()
+                q_intent = db_session.query(CheckoutIntent).filter(
+                    CheckoutIntent.provider == "lemonsqueezy",
+                    CheckoutIntent.status == CheckoutIntentStatus.CREATED.value,
+                )
+                matched = False
+                if session_id:
+                    intents = q_intent.filter(CheckoutIntent.session_id == session_id).all()
+                    for it in intents:
+                        it.status = CheckoutIntentStatus.PAID.value
+                        it.paid_at = now
+                        it.order_external_id = external_id
+                        matched = True
+                if (not matched) and ip_hash:
+                    intents = q_intent.filter(CheckoutIntent.ip_hash == ip_hash).all()
+                    for it in intents:
+                        it.status = CheckoutIntentStatus.PAID.value
+                        it.paid_at = now
+                        it.order_external_id = external_id
+                        matched = True
+                if (not matched) and user_email:
+                    intents = q_intent.filter(CheckoutIntent.email == user_email).all()
+                    for it in intents:
+                        it.status = CheckoutIntentStatus.PAID.value
+                        it.paid_at = now
+                        it.order_external_id = external_id
+            except Exception:
+                logger.exception("Failed updating checkout intent status=paid from webhook")
 
             # Extend expiry window for existing jobs for this user (best-effort)
             try:
