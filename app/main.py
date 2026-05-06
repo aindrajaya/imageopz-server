@@ -76,11 +76,47 @@ def create_app() -> FastAPI:
         allow_origins=settings.cors_allow_origins_list(),
         allow_credentials=settings.cors_allow_credentials,
         allow_methods=["GET", "POST", "OPTIONS"],
-        allow_headers=["Content-Type", "X-Session-Id"],
+        # Must include Authorization for Supabase JWT authenticated calls.
+        # Keep explicit list (not '*') because we may use credentials in dev/prod.
+        allow_headers=["Content-Type", "X-Session-Id", "Authorization"],
     )
     
     # Add compression middleware
     app.add_middleware(GZipMiddleware, minimum_size=1000)
+
+    # Lightweight request logging for diagnosing frontend integration issues (CORS/auth/session).
+    # Never logs bearer tokens or full cookies.
+    @app.middleware("http")
+    async def _log_key_requests(request, call_next):
+        key_paths = {
+            "/api/v1/session/me",
+            "/api/v1/session/restore",
+            "/api/v1/session/reconcile",
+            "/api/v1/checkout/lemonsqueezy",
+            "/api/v1/optimize",
+        }
+        should_log = request.url.path in key_paths
+        if should_log:
+            auth = request.headers.get("authorization") or ""
+            auth_has_bearer = auth.lower().startswith("bearer ")
+            auth_token = auth.split(" ", 1)[1].strip() if auth_has_bearer and " " in auth else ""
+            auth_is_jwt_like = auth_has_bearer and (auth_token.count(".") == 2)
+            logger.info(
+                "HTTP %s %s origin=%s acr_method=%s acr_headers=%s x_session_id=%s cookie_present=%s auth_present=%s auth_jwt_like=%s",
+                request.method,
+                request.url.path,
+                request.headers.get("origin"),
+                request.headers.get("access-control-request-method"),
+                request.headers.get("access-control-request-headers"),
+                request.headers.get("x-session-id"),
+                bool(request.headers.get("cookie")),
+                bool(auth),
+                bool(auth_is_jwt_like),
+            )
+        resp = await call_next(request)
+        if should_log:
+            logger.info("HTTP %s %s -> %s", request.method, request.url.path, resp.status_code)
+        return resp
     
     # Custom exception handler for validation errors
     @app.exception_handler(RequestValidationError)
