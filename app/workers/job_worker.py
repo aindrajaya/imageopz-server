@@ -6,6 +6,7 @@ Uses Redis as message broker for job processing.
 import json
 import logging
 import redis
+import time
 from typing import Optional, List
 from datetime import datetime, timedelta
 from uuid import uuid4
@@ -177,10 +178,31 @@ class JobWorker:
             True if successful, False on error
         """
         try:
-            # Retrieve job from database
-            job = self.db_session.query(Job).filter_by(id=job_id).first()
+            # Retrieve job from database with retry logic
+            # Retry up to 3 times with 500ms delay to handle race condition with API
+            # where Redis is faster than SQLite commit
+            job = None
+            max_retries = 3
+            retry_delay = 0.5  # seconds
+            
+            for attempt in range(max_retries):
+                job = self.db_session.query(Job).filter_by(id=job_id).first()
+                if job:
+                    break
+                
+                if attempt < max_retries - 1:
+                    logger.warning(
+                        "Job %s not found in database (attempt %d/%d), retrying in %.1fs...",
+                        job_id, attempt + 1, max_retries, retry_delay
+                    )
+                    time.sleep(retry_delay)
+            
             if not job:
-                logger.warning("Job %s not found in database", job_id)
+                logger.warning(
+                    "Job %s not found in database after %d retries. This may indicate "
+                    "a critical issue with the database or API persistence.",
+                    job_id, max_retries
+                )
                 return False
             
             # Update status to processing

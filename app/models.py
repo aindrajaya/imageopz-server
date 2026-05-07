@@ -203,10 +203,16 @@ class Database:
     def init_db(self):
         """Initialize database connection and create tables"""
         # Create engine with SQLite and WAL mode
+        connect_args = {}
+        if "sqlite" in settings.database_url:
+            # check_same_thread=False: allow cross-thread access (worker thread + main thread)
+            # timeout=30: wait up to 30s if database is locked (handles API/Worker concurrency)
+            connect_args = {"check_same_thread": False, "timeout": 30}
+        
         self.engine = create_engine(
             settings.database_url,
             echo=settings.database_echo,
-            connect_args={"check_same_thread": False} if "sqlite" in settings.database_url else {}
+            connect_args=connect_args if connect_args else {}
         )
         
         # Enable WAL mode for SQLite to prevent locked database errors
