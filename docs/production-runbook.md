@@ -83,3 +83,11 @@ Put Nginx in front for TLS, gzip/brotli, request size limits, and better client 
 
 - Do **not** run background worker/scheduler inside the FastAPI lifespan when using `uvicorn --workers > 1`.
 - On 1 vCPU / 1GB RAM, keep API workers at `1` and rely on the Redis worker for heavy image processing.
+
+## Run Memory Monitor
+```
+sudo systemctl daemon-reload
+sudo systemctl enable imageopz-memory-monitor
+sudo systemctl start imageopz-memory-monitor
+sudo systemctl status imageopz-memory-monitor
+```
