@@ -17,6 +17,7 @@ FastAPI backend for ImageOpz (bulk image optimization + async worker + R2 storag
 ## Notes
 - Uploaded files are streamed to `./tmp/uploads` and removed after processing.
 - SQLite runs in WAL mode.
+- `GET /api/v1/status/{job_id}` now includes original dimensions (`original_width`/`original_height`) and processing timing (`processing_*`) when available.
 
 ## Production
 - Use systemd and run API + worker as separate services: `docs/production-runbook.md`

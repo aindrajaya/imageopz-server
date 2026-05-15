@@ -85,6 +85,8 @@ class JobStatusResponse(BaseModel):
     # Original file info
     original_filename: str = Field(..., description="Original filename")
     original_size: int = Field(..., description="Original file size in bytes")
+    original_width: Optional[int] = Field(None, description="Original image width in pixels")
+    original_height: Optional[int] = Field(None, description="Original image height in pixels")
     
     # Optimization results
     optimized_size: Optional[int] = Field(None, description="Optimized file size in bytes")
@@ -106,6 +108,9 @@ class JobStatusResponse(BaseModel):
     # Metadata
     created_at: datetime = Field(..., description="Job creation timestamp")
     expiry_date: datetime = Field(..., description="File expiration timestamp")
+    processing_started_at: Optional[datetime] = Field(None, description="When processing started (UTC)")
+    processing_finished_at: Optional[datetime] = Field(None, description="When processing finished (UTC)")
+    processing_duration_ms: Optional[int] = Field(None, description="Total processing time in milliseconds")
     
     class Config:
         schema_extra = {
@@ -114,12 +119,17 @@ class JobStatusResponse(BaseModel):
                 "status": "done",
                 "original_filename": "photo.jpg",
                 "original_size": 5242880,
+                "original_width": 1920,
+                "original_height": 1080,
                 "optimized_size": 2097152,
                 "compression_ratio": 0.4,
                 "r2_url": "https://cdn.example.com/optimized/550e8400-e29b-41d4-a716-446655440000.avif",
                 "error_message": None,
                 "created_at": "2024-01-15T10:30:00Z",
-                "expiry_date": "2024-01-22T10:30:00Z"
+                "expiry_date": "2024-01-22T10:30:00Z",
+                "processing_started_at": "2024-01-15T10:30:01Z",
+                "processing_finished_at": "2024-01-15T10:30:02Z",
+                "processing_duration_ms": 950
             }
         }
 

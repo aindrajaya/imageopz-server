@@ -63,14 +63,15 @@ class SecurityValidator:
             return mime_or_error if valid else None
     
     @staticmethod
-    def strip_exif_and_metadata(file_data: bytes) -> bytes:
+    def strip_exif_and_metadata_with_dimensions(file_data: bytes) -> tuple[bytes, int, int]:
         """
         Remove EXIF and all metadata from image to prevent XSS and data leaks.
-        Returns clean image data.
+        Returns clean image data and original dimensions (width, height).
         """
         try:
             # Open image and strip all EXIF/metadata
             img = Image.open(io.BytesIO(file_data))
+            width, height = img.size
             
             # Create new image without metadata
             data = list(img.getdata())
@@ -84,7 +85,7 @@ class SecurityValidator:
             image_without_exif.save(output, format=fmt)
             output.seek(0)
             
-            return output.getvalue()
+            return output.getvalue(), int(width), int(height)
         except Exception as e:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -92,12 +93,19 @@ class SecurityValidator:
             )
 
     @staticmethod
-    def strip_exif_and_metadata_path(file_path: str) -> bytes:
+    def strip_exif_and_metadata(file_data: bytes) -> bytes:
+        clean, _, _ = SecurityValidator.strip_exif_and_metadata_with_dimensions(file_data)
+        return clean
+
+    @staticmethod
+    def strip_exif_and_metadata_path_with_dimensions(file_path: str) -> tuple[bytes, int, int]:
         """
         Remove EXIF/metadata from an image stored on disk.
+        Returns clean image data and original dimensions (width, height).
         """
         try:
             img = Image.open(file_path)
+            width, height = img.size
             data = list(img.getdata())
             image_without_exif = Image.new(img.mode, img.size)
             image_without_exif.putdata(data)
@@ -106,12 +114,17 @@ class SecurityValidator:
             fmt = img.format or "JPEG"
             image_without_exif.save(output, format=fmt)
             output.seek(0)
-            return output.getvalue()
+            return output.getvalue(), int(width), int(height)
         except Exception as e:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"Failed to process image: {str(e)}"
             )
+
+    @staticmethod
+    def strip_exif_and_metadata_path(file_path: str) -> bytes:
+        clean, _, _ = SecurityValidator.strip_exif_and_metadata_path_with_dimensions(file_path)
+        return clean
     
     @staticmethod
     def validate_decompression_bomb_protection(file_data: bytes) -> bool:

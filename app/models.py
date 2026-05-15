@@ -166,6 +166,10 @@ class Job(Base):
     original_filename = Column(String(255))
     original_size = Column(Integer)  # bytes
     optimized_size = Column(Integer, nullable=True)  # bytes
+
+    # Original image dimensions (pixels)
+    original_width = Column(Integer, nullable=True)
+    original_height = Column(Integer, nullable=True)
     
     # Compression ratio
     compression_ratio = Column(Float, nullable=True)  # optimized_size / original_size
@@ -180,6 +184,11 @@ class Job(Base):
     # Processing info
     quality_setting = Column(Integer)  # 50 for free, 75 for pro
     processing_error = Column(Text, nullable=True)
+
+    # Processing timing (set by worker)
+    processing_started_at = Column(DateTime, nullable=True)
+    processing_finished_at = Column(DateTime, nullable=True)
+    processing_duration_ms = Column(Integer, nullable=True)
     
     # Metadata
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
@@ -264,6 +273,25 @@ class Database:
                     if "pro_source" not in existing:
                         conn.exec_driver_sql("ALTER TABLE users_quota ADD COLUMN pro_source VARCHAR(32);")
                         logger.info("Migrated users_quota: added pro_source")
+
+                    # jobs: add original dimensions + processing timing columns if missing
+                    job_rows = conn.exec_driver_sql("PRAGMA table_info(jobs);").fetchall()
+                    job_existing = {r[1] for r in job_rows}
+                    if "original_width" not in job_existing:
+                        conn.exec_driver_sql("ALTER TABLE jobs ADD COLUMN original_width INTEGER;")
+                        logger.info("Migrated jobs: added original_width")
+                    if "original_height" not in job_existing:
+                        conn.exec_driver_sql("ALTER TABLE jobs ADD COLUMN original_height INTEGER;")
+                        logger.info("Migrated jobs: added original_height")
+                    if "processing_started_at" not in job_existing:
+                        conn.exec_driver_sql("ALTER TABLE jobs ADD COLUMN processing_started_at DATETIME;")
+                        logger.info("Migrated jobs: added processing_started_at")
+                    if "processing_finished_at" not in job_existing:
+                        conn.exec_driver_sql("ALTER TABLE jobs ADD COLUMN processing_finished_at DATETIME;")
+                        logger.info("Migrated jobs: added processing_finished_at")
+                    if "processing_duration_ms" not in job_existing:
+                        conn.exec_driver_sql("ALTER TABLE jobs ADD COLUMN processing_duration_ms INTEGER;")
+                        logger.info("Migrated jobs: added processing_duration_ms")
                     conn.commit()
             except Exception:
                 logger.exception("SQLite migration failed")

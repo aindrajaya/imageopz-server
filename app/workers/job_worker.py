@@ -204,9 +204,13 @@ class JobWorker:
                     job_id, max_retries
                 )
                 return False
+
+            t0 = time.perf_counter()
+            started_at = datetime.utcnow()
             
             # Update status to processing
             job.status = JobStatus.PROCESSING
+            job.processing_started_at = started_at
             self.db_session.commit()
             self.queue.set_job_progress(job_id, 10, "Processing started")
             
@@ -215,14 +219,20 @@ class JobWorker:
             # Strip EXIF and metadata
             try:
                 if job.upload_path:
-                    file_data = SecurityValidator.strip_exif_and_metadata_path(job.upload_path)
+                    file_data, width, height = SecurityValidator.strip_exif_and_metadata_path_with_dimensions(job.upload_path)
                 else:
-                    file_data = self._get_file_data(job_id)
-                if not file_data:
-                    raise Exception("Original file not found")
+                    raw = self._get_file_data(job_id)
+                    if not raw:
+                        raise Exception("Original file not found")
+                    file_data, width, height = SecurityValidator.strip_exif_and_metadata_with_dimensions(raw)
+
+                job.original_width = width
+                job.original_height = height
             except Exception as e:
                 job.status = JobStatus.FAILED
                 job.processing_error = f"Metadata stripping failed: {str(e)}"
+                job.processing_finished_at = datetime.utcnow()
+                job.processing_duration_ms = int((time.perf_counter() - t0) * 1000)
                 self.db_session.commit()
                 return False
             
@@ -237,6 +247,8 @@ class JobWorker:
             except Exception as e:
                 job.status = JobStatus.FAILED
                 job.processing_error = f"Image optimization failed: {str(e)}"
+                job.processing_finished_at = datetime.utcnow()
+                job.processing_duration_ms = int((time.perf_counter() - t0) * 1000)
                 self.db_session.commit()
                 return False
             
@@ -253,6 +265,8 @@ class JobWorker:
                 if not success:
                     job.status = JobStatus.FAILED
                     job.processing_error = f"R2 upload failed: {url_or_error}"
+                    job.processing_finished_at = datetime.utcnow()
+                    job.processing_duration_ms = int((time.perf_counter() - t0) * 1000)
                     self.db_session.commit()
                     return False
                 
@@ -263,6 +277,8 @@ class JobWorker:
             job.optimized_size = optimized_size
             job.compression_ratio = optimized_size / job.original_size
             job.status = JobStatus.DONE
+            job.processing_finished_at = datetime.utcnow()
+            job.processing_duration_ms = int((time.perf_counter() - t0) * 1000)
             self.queue.set_job_progress(job_id, 100, "Optimization complete")
             
             self.db_session.commit()
@@ -277,6 +293,9 @@ class JobWorker:
             try:
                 job.status = JobStatus.FAILED
                 job.processing_error = f"Unexpected error: {str(e)}"
+                if "t0" in locals():
+                    job.processing_finished_at = datetime.utcnow()
+                    job.processing_duration_ms = int((time.perf_counter() - t0) * 1000)
                 self.db_session.commit()
             except:
                 pass
