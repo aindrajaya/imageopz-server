@@ -1,0 +1,75 @@
+name: payments-go
+
+on:
+  push:
+    branches: [main]
+    paths: ["services/payments-go/**", "alembic/**", ".github/workflows/payments-go.yml"]
+  pull_request:
+    paths: ["services/payments-go/**", "alembic/**", ".github/workflows/payments-go.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    timeout-minutes: 15
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: services/payments-go
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: services/payments-go/go.mod
+          cache-dependency-path: services/payments-go/go.sum
+      - run: go vet ./...
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.14.0
+          working-directory: services/payments-go
+          args: --build-tags integration
+      - run: go test -race ./...
+
+  integration:
+    timeout-minutes: 15
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: dev
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: alembic upgrade head
+        env:
+          DATABASE_URL: postgresql+psycopg://postgres:dev@localhost:5432/postgres
+      - run: alembic check
+        env:
+          DATABASE_URL: postgresql+psycopg://postgres:dev@localhost:5432/postgres
+      - run: pytest -q tests/test_rls_deny_all.py
+        env:
+          TEST_DATABASE_URL: postgresql+psycopg://postgres:dev@localhost:5432/postgres
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: services/payments-go/go.mod
+          cache-dependency-path: services/payments-go/go.sum
+      - run: go test -race -tags integration -count=1 ./internal/httpapi/
+        working-directory: services/payments-go
+        env:
+          TEST_DATABASE_URL: postgres://postgres:dev@localhost:5432/postgres?sslmode=disable
+
+  docker:
+    timeout-minutes: 15
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - run: docker build -t payments-go:ci services/payments-go
