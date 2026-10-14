@@ -35,3 +35,10 @@ Additional observations (new, minor):
 - Test DB is session-scoped and shared across tests, so tests use unique ids.
 
 **Proposed next step:** T-002 — decide replay and refund semantics with the owner, then change them test-first by editing the "currently" tests deliberately; define column-level write ownership between FastAPI and Go.
+
+
+## Reconciled 2026-10-15
+- Merged: the T-001 commits `00370e7` (tests) and `b504211` (CI), together with the `.gitignore` commit `3e6c6d8`, were squashed into `f5c1266` (PR #1, `feat/postgres alembic`). This is the repo's squash-merge convention; the original hashes exist only on `origin/test/webhook-characterization`.
+- Verified on `main`: `tests/test_webhook_characterization.py` and `.github/workflows/backend-tests.yml` are present.
+- The "Not committed" wording above is superseded by the merge. CI is green on `main` (run 38638825622, sqlite + postgres legs).
+- Behaviors pinned here that are protected or intentionally changing: see `registers.md` and T-004 requirements R1-R5 in `STATE.md`.
