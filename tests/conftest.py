@@ -18,10 +18,29 @@ def test_env(tmp_path_factory):
     tmp_dir = tmp_path_factory.mktemp("imageopz_tests")
     db_path = tmp_dir / "test.db"
 
+    # Default: temp SQLite file. If TEST_DATABASE_URL is set (postgresql[+psycopg]://...), a fresh
+    # database is created on that server, migrated with `alembic upgrade head`, and dropped afterwards.
+    pg_admin_url = os.environ.get("TEST_DATABASE_URL")
+    pg_db_name = None
+    if pg_admin_url:
+        import uuid
+        import psycopg
+        from psycopg import sql
+        from sqlalchemy.engine import make_url
+
+        admin = make_url(pg_admin_url.replace("postgresql://", "postgresql+psycopg://", 1))
+        pg_db_name = f"imageopz_test_{uuid.uuid4().hex[:10]}"
+        conninfo = admin.set(drivername="postgresql").render_as_string(hide_password=False)
+        with psycopg.connect(conninfo, autocommit=True) as c:
+            c.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(pg_db_name)))
+        database_url = admin.set(database=pg_db_name).render_as_string(hide_password=False)
+    else:
+        database_url = f"sqlite:///{db_path}"
+
     # Ensure settings pick up safe test values (settings instantiates on import).
     os.environ["ENVIRONMENT"] = "development"
     os.environ["DEBUG"] = "False"
-    os.environ["DATABASE_URL"] = f"sqlite:///{db_path}"
+    os.environ["DATABASE_URL"] = database_url
     os.environ["DATABASE_ECHO"] = "False"
     os.environ["SECRET_KEY"] = "test-secret-key"
 
@@ -48,7 +67,27 @@ def test_env(tmp_path_factory):
     os.environ["SUPABASE_JWT_ISSUER"] = "https://supabase.test/auth/v1"
     os.environ["SUPABASE_JWT_AUDIENCE"] = "authenticated"
 
+    if pg_db_name:
+        # Build the schema exactly as production will: via Alembic, not create_all.
+        from alembic import command
+        from alembic.config import Config
+
+        cfg = Config(str(PROJECT_ROOT / "alembic.ini"))
+        cfg.set_main_option("script_location", str(PROJECT_ROOT / "alembic"))
+        cfg.attributes["url"] = database_url  # don't rely on settings import order
+        command.upgrade(cfg, "head")
+
     yield {"tmp_dir": tmp_dir, "db_path": db_path, "upload_dir": upload_dir}
+
+    if pg_db_name:
+        try:
+            import app.models as models
+            if models.db.engine is not None:
+                models.db.engine.dispose()
+        except Exception:
+            pass
+        with psycopg.connect(conninfo, autocommit=True) as c:
+            c.execute(sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(pg_db_name)))
 
 
 @pytest.fixture()

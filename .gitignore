@@ -11,3 +11,8 @@ branch_structure.json
 .vscode/
 
 .DS_Store
+.env
+.env.*
+!.env.example
+imageopz.db*
+tmp/

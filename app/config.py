@@ -24,6 +24,8 @@ class Settings(BaseSettings):
     # Database
     database_url: str = "sqlite:///./imageopz.db"
     database_echo: bool = False
+    # Postgres only: keep small for Cloud Run / Supabase pooler (max_overflow is fixed at 0)
+    db_pool_size: int = 2
 
     # Redis & Job Queue
     redis_url: str = "redis://localhost:6379/0"
@@ -123,6 +125,14 @@ class Settings(BaseSettings):
             if v in {"0", "false", "no", "n", "off", "release", "production", "prod"}:
                 return False
         return value
+
+    def sqlalchemy_database_url(self) -> str:
+        """DATABASE_URL with bare postgres(ql):// mapped to the psycopg3 driver."""
+        url = (self.database_url or "").strip()
+        for prefix in ("postgresql://", "postgres://"):
+            if url.startswith(prefix):
+                return "postgresql+psycopg://" + url[len(prefix):]
+        return url
 
     def cors_allow_origins_list(self) -> list[str]:
         raw = (self.cors_allow_origins or "").strip()

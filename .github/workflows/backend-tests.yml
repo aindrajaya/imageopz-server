@@ -1,0 +1,45 @@
+name: backend-tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        db: [sqlite, postgres]
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: dev
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Only set for the postgres leg; conftest creates and drops a fresh database.
+      TEST_DATABASE_URL: ${{ matrix.db == 'postgres' && 'postgresql+psycopg://postgres:dev@localhost:5432/postgres' || '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install libmagic
+        run: sudo apt-get update && sudo apt-get install -y libmagic1
+      - run: pip install -r requirements.txt
+      - name: Alembic is consistent with the models (postgres leg)
+        if: matrix.db == 'postgres'
+        run: |
+          pg_url="postgresql+psycopg://postgres:dev@localhost:5432/postgres"
+          DATABASE_URL="$pg_url" alembic upgrade head
+          DATABASE_URL="$pg_url" alembic check
+      - run: pytest -q
