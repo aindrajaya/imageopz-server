@@ -14,6 +14,14 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 
+def include_name(name, type_, parent_names):
+    # Autogenerate compares only the default schema. The `payments` schema belongs to the Go ingress
+    # (migration 0003 creates it, no model mirrors it), so reflecting it would propose dropping it.
+    if type_ == "schema":
+        return name is None
+    return True
+
+
 def _url() -> str:
     # Allows `alembic -x url=...` or a programmatic override before falling back to settings.
     override = context.get_x_argument(as_dictionary=True).get("url") or config.attributes.get("url")
@@ -30,6 +38,8 @@ def run_migrations_offline() -> None:
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
         compare_type=True,
+        include_schemas=True,
+        include_name=include_name,
         render_as_batch=url.startswith("sqlite"),
     )
     with context.begin_transaction():
@@ -44,6 +54,8 @@ def run_migrations_online() -> None:
             connection=connection,
             target_metadata=target_metadata,
             compare_type=True,
+            include_schemas=True,
+            include_name=include_name,
             render_as_batch=url.startswith("sqlite"),
         )
         with context.begin_transaction():

@@ -110,3 +110,16 @@ def test_alembic_version_is_rls_protected_from_anon(client):
 
     with models.db.engine.connect() as conn:  # nothing was actually deleted
         assert conn.execute(text("SELECT count(*) FROM alembic_version")).scalar_one() == owner_rows
+
+
+def test_payments_webhook_deliveries_has_rls_enabled_and_no_policies(client):
+    # Owned by the Go ingress, created by migration 0003 in its own schema (not in Base.metadata).
+    import app.models as models
+
+    with models.db.engine.connect() as conn:
+        rls = conn.execute(text(
+            "SELECT relrowsecurity FROM pg_class WHERE oid = 'payments.webhook_deliveries'::regclass"
+        )).scalar_one()
+        policies = conn.execute(text("SELECT count(*) FROM pg_policies WHERE schemaname = 'payments'")).scalar_one()
+    assert rls is True
+    assert policies == 0
