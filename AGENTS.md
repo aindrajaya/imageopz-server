@@ -1,0 +1,51 @@
+# AGENTS.md
+
+Shared agent memory (CLAUDE.md is a symlink to this file). Every rule carries a one-line why.
+
+## Read first
+- docs/engineering/STATE.md - objective, baseline, open tasks; a snapshot, overwritten each task
+- docs/engineering/tasks/ (contracts, handoffs), adr/ (decisions), registers.md (lessons, debt, protected behaviors)
+
+## Stack
+- Python 3.11, FastAPI, SQLAlchemy 2.0, Alembic; Postgres 16 (Supabase in prod), SQLite for quick local tests
+- Cloudflare R2 (outputs), LemonSqueezy (payments), Supabase Auth (JWT via JWKS), Resend (email fallback)
+- Target hosting Cloud Run (ADR-002); Go payments ingress planned (ADR-001); currently offline
+
+## Layout
+- app/routes/: optimization.py (optimize, status, checkout, LemonSqueezy webhook; large), session.py, health.py
+- app/models.py, app/config.py (env-driven settings and tier limits), app/utils/ (security, auth_deps, supabase_auth)
+- app/workers/ + run_worker.py: Redis queue worker and cleanup scheduler, a separate process (Cloud Tasks replaces it)
+- app/services/: image_service.py (Pillow/AVIF, R2), email_service.py; alembic/; tests/; issues/ (incident notes)
+- Identity: anonymous users by cookie imageopz_sid or X-Session-Id; Pro users by Supabase JWT; UsersQuota holds credits and Pro state
+- docs/PRD-backend.v3.md is the latest spec; ci-convert.py is a standalone AVIF CLI, unrelated to the server
+
+## Commands
+- Tests on SQLite: pytest -q in the project venv; one test: pytest tests/test_x.py -k name
+- Postgres leg: TEST_DATABASE_URL=postgresql+psycopg://user:pass@host:5432/postgres pytest -q (fresh DB built by Alembic)
+- Migrations: alembic upgrade head; after model changes alembic revision --autogenerate, review, then alembic check
+- No linter or formatter is configured
+
+## Rules
+- Schema changes only through Alembic, never create_all/ALTER in app code - single DDL owner (ADR-003)
+- Every new table enables RLS on Postgres - Supabase Data API exposes public; tests/test_rls_deny_all.py enforces it
+- App and migrations connect as the table-owner role - non-owners see zero rows under RLS
+- Python is the only writer of users, users_quota, orders; activation is idempotent per order - avoids drift and double grants (ADR-001)
+- Commit the Job row before enqueueing; the worker retries lookups - Redis can deliver before the DB commit is visible (issues/RACE_CONDITION_FIX.md)
+- Tests reload app.config, app.models, app.main per test; follow tests/conftest.py - settings and db are module singletons
+- Never edit existing test assertions to make a change pass; behavior changes update tests deliberately and say so - tests are the contract
+- Reproduce a bug with a failing test at the closest realistic level before fixing it - proves the fix
+- Choose designs on simplicity, robustness and maintainability; ignore implementation time, weigh operating cost and solo-maintainer burden
+- Fix lint/type/test problems your change introduces in the same change; log pre-existing defects as follow-ups in the task file - no silent scope creep
+- Stay inside the task's scope and authorization; the owner commits and pushes; no git stash/reset/clean or history rewrite - keeps the owner's work safe
+- Never read or print .env files, local DB files or secrets; never put secrets in code, logs or docs - they leak through history
+- New dependencies need a stated reason and an exact pin - reproducible builds
+- Plain hyphens, no em-dashes; no AI co-author trailers; never hand-edit generated files (Alembic revisions after review) - owner convention
+
+## Learned (date - rule - why)
+- 2026-10-15 - STATE.md is a snapshot: overwrite it each task; append only to task files - keeps STATE short and current
+- 2026-10-15 - Squash merges: reference the squash SHA and PR number, not branch commits - branch SHAs vanish from main
+
+## Runbooks (docs/engineering/runbooks/)
+- local-run.md - start the API and worker locally, regenerate the OpenAPI spec
+- local-postgres.md - throwaway Postgres cluster for the Postgres test leg
+- db-migrations.md - writing and reviewing migrations, Supabase pooler modes, RLS for new tables

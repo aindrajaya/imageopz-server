@@ -16,3 +16,4 @@ branch_structure.json
 !.env.example
 imageopz.db*
 tmp/
+*.bak
