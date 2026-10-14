@@ -54,6 +54,15 @@ class Settings(BaseSettings):
     checkout_intent_ttl_minutes: int = 15
     activation_pending_retry_ms: int = 1500
 
+    # Internal service-to-service auth (POST /internal/*). Unset or unknown mode refuses every request.
+    internal_auth_mode: Optional[str] = None  # "shared_secret" (local/tests) | "oidc" (Cloud Tasks)
+    internal_auth_shared_secret: Optional[str] = None
+    internal_auth_audience: Optional[str] = None
+    internal_auth_allowed_emails: str = ""  # comma-separated service-account emails
+
+    def internal_auth_allowed_emails_list(self) -> list:
+        return [e.strip().lower() for e in self.internal_auth_allowed_emails.split(",") if e.strip()]
+
     # Supabase Auth (optional)
     supabase_jwks_url: Optional[str] = None
     supabase_jwt_issuer: Optional[str] = None

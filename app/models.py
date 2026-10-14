@@ -52,6 +52,7 @@ class CheckoutIntentStatus(str, enum.Enum):
     CREATED = "created"      # checkout created (not yet confirmed paid)
     PAID = "paid"            # payment confirmed (webhook or reconcile)
     EXPIRED = "expired"      # intent expired before payment confirmation
+    REFUNDED = "refunded"    # paid order was refunded (no longer eligible for rehydration)
 
 
 class User(Base):
@@ -109,6 +110,8 @@ class Order(Base):
     event_name = Column(String(64), nullable=True)
 
     user_id = Column(String(64), ForeignKey("users.id"), nullable=True, index=True)
+    # The quota row whose Pro entitlement this order granted (lets a refund revoke exactly that grant).
+    user_quota_id = Column(String(64), ForeignKey("users_quota.id", ondelete="SET NULL"), nullable=True, index=True)
     email = Column(String(320), index=True, nullable=True)
 
     status = Column(String(32), default=OrderStatus.UNKNOWN.value, index=True)
@@ -121,6 +124,25 @@ class Order(Base):
         UniqueConstraint("provider", "external_id", name="uq_orders_provider_external_id"),
         Index("idx_orders_provider_external_id", "provider", "external_id"),
     )
+
+class ProcessedPaymentEvent(Base):
+    """
+    One row per applied payment event; the unique key makes redelivery a no-op (ADR-004).
+    Inserted in the same transaction as the event's effects.
+    """
+    __tablename__ = "processed_payment_events"
+
+    id = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    provider = Column(String(32), nullable=False)
+    event_name = Column(String(64), nullable=False)
+    object_type = Column(String(64), nullable=False)
+    object_id = Column(String(128), nullable=False)
+    processed_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("provider", "event_name", "object_type", "object_id"),
+    )
+
 
 class CheckoutIntent(Base):
     """

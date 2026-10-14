@@ -13,7 +13,7 @@ import logging
 
 from app.config import settings
 from app.models import db
-from app.routes import optimization, health, session
+from app.routes import optimization, health, session, internal
 
 # Configure logging
 logging.basicConfig(
@@ -135,6 +135,7 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
     app.include_router(optimization.router)
     app.include_router(session.router)
+    app.include_router(internal.router)
     
     # Root endpoint
     @app.get("/")

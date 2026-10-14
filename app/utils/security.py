@@ -285,7 +285,7 @@ class WebhookValidator:
     
     @staticmethod
     def verify_lemonsqueezy_signature(
-        payload: str,
+        payload: "str | bytes",
         signature: str
     ) -> bool:
         """
@@ -297,7 +297,7 @@ class WebhookValidator:
         
         expected_signature = hmac.new(
             settings.lemonsqueezy_secret.encode(),
-            payload.encode(),
+            payload if isinstance(payload, bytes) else payload.encode(),
             hashlib.sha256
         ).hexdigest()
         

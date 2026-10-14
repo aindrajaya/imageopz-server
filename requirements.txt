@@ -19,3 +19,5 @@ resend==2.29.0
 psutil==6.0.0
 alembic==1.16.5
 psycopg[binary]==3.2.13
+google-auth==2.41.1
+requests==2.34.2

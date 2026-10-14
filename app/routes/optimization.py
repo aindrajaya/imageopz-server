@@ -43,6 +43,7 @@ from app.utils.security import (
 )
 from app.utils.auth_deps import get_optional_supabase_identity
 from app.utils.supabase_auth import SupabaseIdentity
+from app.services.payments import apply_lemonsqueezy_body
 from app.workers.job_worker import job_queue
 from app.config import settings
 
@@ -834,209 +835,31 @@ async def handle_lemonsqueezy_webhook(
         # Get payload and signature
         payload = await request.body()
         signature = request.headers.get("X-Signature", "")
-        
-        # Verify signature
-        if not WebhookValidator.verify_lemonsqueezy_signature(payload.decode(), signature):
+
+        # Verify signature (over the raw bytes, so an undecodable body with a valid signature reaches the service)
+        if not WebhookValidator.verify_lemonsqueezy_signature(payload, signature):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid webhook signature"
             )
-        
-        # Parse payload
-        import json
-        data = json.loads(payload)
-        meta = data.get("meta", {}) or {}
-        event_name = data.get("event_name") or meta.get("event_name")
-        event_data = data.get("data", {}) or {}
 
-        # Extract a stable external order id + email (best-effort; payload structures vary)
-        external_id = (
-            str(event_data.get("id"))
-            if event_data.get("id") is not None
-            else str(data.get("id")) if data.get("id") is not None else None
-        )
-        attributes = event_data.get("attributes", {}) or {}
-        user_email = (
-            attributes.get("user_email")
-            or attributes.get("customer_email")
-            or attributes.get("email")
-            or (meta.get("custom_data", {}) or {}).get("email")
-        )
+        result = apply_lemonsqueezy_body(db_session, payload)
 
-        # Idempotently store the order event for support/audit (commit even if we don't activate pro)
-        order = None
-        if external_id:
-            order = (
-                db_session.query(Order)
-                .filter_by(provider="lemonsqueezy", external_id=external_id)
-                .first()
-            )
-            if not order:
-                order = Order(provider="lemonsqueezy", external_id=external_id)
-                db_session.add(order)
-
-            order.event_name = str(event_name) if event_name is not None else None
-            order.email = user_email
-            order.raw_payload_json = payload.decode("utf-8", errors="replace")
-
-            paid_events = {"order_created", "order:created"}
-            order.status = OrderStatus.PAID.value if (event_name in paid_events) else OrderStatus.UNKNOWN.value
-            db_session.commit()
-        
-        # Handle order_created event (successful payment)
-        paid_events = {"order_created", "order:created"}
-        if event_name in paid_events:
-            # Best-effort mapping back to an existing free-tier user record.
-            # Recommended: include `meta.custom_data.ip_hash` or `meta.custom_data.session_id`
-            # when creating the LemonSqueezy checkout.
-            custom = meta.get("custom_data", {}) or {}
-            ip_hash = custom.get("ip_hash")
-            session_id = custom.get("session_id")
-            supabase_user_id = custom.get("supabase_user_id")
-
-            pro_expiry = datetime.utcnow() + timedelta(days=settings.pro_tier_expiry_days)
-            user = None
-            if user_email:
-                user = db_session.query(User).filter_by(email=user_email).first()
-                if not user:
-                    user = User(email=user_email)
-                    db_session.add(user)
-                    db_session.flush()
-
-            # Link Supabase user id if present (idempotent). On conflict, log and continue with email-based flow.
-            if user and supabase_user_id:
-                try:
-                    existing = db_session.query(User).filter_by(supabase_user_id=str(supabase_user_id)).first()
-                    if existing and existing.id != user.id:
-                        logger.warning(
-                            "Supabase user id already linked to another user; skipping link. supabase_user_id=%s user_email=%s",
-                            supabase_user_id,
-                            user_email,
-                        )
-                    else:
-                        user.supabase_user_id = str(supabase_user_id)
-                except Exception:
-                    logger.exception("Failed linking supabase_user_id from webhook")
-
-            # Link order to user if possible
-            if order and user:
-                order.user_id = user.id
-
-            # Create/update quota row for this paid user.
-            # Priority:
-            # 1) user_id (email-linked user)
-            # 2) session_id (durable guest identifier)
-            # ip_hash is last-resort and should not be used to grant Pro long-term.
-            user_quota = None
-            if user:
-                user_quota = db_session.query(UsersQuota).filter_by(user_id=user.id).first()
-            if not user_quota and session_id:
-                user_quota = db_session.query(UsersQuota).filter_by(session_id=session_id).first()
-            # ip_hash last-resort: only if a recent checkout intent exists (activation window).
-            if not user_quota and ip_hash:
-                try:
-                    now = datetime.utcnow()
-                    recent_intent = (
-                        db_session.query(CheckoutIntent)
-                        .filter(
-                            CheckoutIntent.provider == "lemonsqueezy",
-                            CheckoutIntent.status == CheckoutIntentStatus.CREATED.value,
-                            CheckoutIntent.expires_at != None,  # noqa: E711
-                            CheckoutIntent.expires_at > now,
-                            CheckoutIntent.ip_hash == ip_hash,
-                        )
-                        .order_by(CheckoutIntent.created_at.desc())
-                        .first()
-                    )
-                    if recent_intent:
-                        # Prefer binding by session_id from the intent if available.
-                        if getattr(recent_intent, "session_id", None):
-                            user_quota = (
-                                db_session.query(UsersQuota)
-                                .filter_by(session_id=recent_intent.session_id)
-                                .order_by(UsersQuota.updated_at.desc())
-                                .first()
-                            )
-                        # If we still cannot find a quota row, do NOT grant Pro purely by ip_hash.
-                except Exception:
-                    pass
-
-            if not user_quota:
-                user_quota = UsersQuota(
-                    id=str(uuid.uuid4()),
-                    user_id=user.id if user else None,
-                    ip_hash=ip_hash,
-                    session_id=session_id,
-                    is_pro=True,
-                    pro_expiry_date=pro_expiry,
-                    pro_credits_used=0,
-                    pro_verified=True,
-                    pro_source="webhook_session" if session_id else "unknown",
-                )
-                db_session.add(user_quota)
-            else:
-                if user and not user_quota.user_id:
-                    user_quota.user_id = user.id
-                user_quota.is_pro = True
-                user_quota.pro_expiry_date = pro_expiry
-                # Reset pro credits window on successful purchase
-                user_quota.pro_credits_used = 0
-                user_quota.pro_verified = True
-                user_quota.pro_source = "webhook_session" if session_id else "unknown"
-
-            # Mark checkout intent as paid (best-effort). This helps activation UX and session rehydration.
-            try:
-                now = datetime.utcnow()
-                q_intent = db_session.query(CheckoutIntent).filter(
-                    CheckoutIntent.provider == "lemonsqueezy",
-                    CheckoutIntent.status == CheckoutIntentStatus.CREATED.value,
-                )
-                matched = False
-                if session_id:
-                    intents = q_intent.filter(CheckoutIntent.session_id == session_id).all()
-                    for it in intents:
-                        it.status = CheckoutIntentStatus.PAID.value
-                        it.paid_at = now
-                        it.order_external_id = external_id
-                        matched = True
-                if (not matched) and ip_hash:
-                    intents = q_intent.filter(CheckoutIntent.ip_hash == ip_hash).all()
-                    for it in intents:
-                        it.status = CheckoutIntentStatus.PAID.value
-                        it.paid_at = now
-                        it.order_external_id = external_id
-                        matched = True
-                if (not matched) and user_email:
-                    intents = q_intent.filter(CheckoutIntent.email == user_email).all()
-                    for it in intents:
-                        it.status = CheckoutIntentStatus.PAID.value
-                        it.paid_at = now
-                        it.order_external_id = external_id
-            except Exception:
-                logger.exception("Failed updating checkout intent status=paid from webhook")
-
-            # Extend expiry window for existing jobs for this user (best-effort)
-            try:
-                db_session.query(Job).filter(
-                    Job.user_quota_id == user_quota.id,
-                    Job.deleted_at == None,
-                ).update({Job.expiry_date: pro_expiry}, synchronize_session=False)
-            except Exception:
-                pass
-
-            db_session.commit()
-
+        if result.outcome == "ignored":
+            return {"status": "ignored"}
+        if result.outcome == "duplicate":
+            return {"success": True, "message": "Duplicate event ignored"}
+        if result.activated:
             # Return a token useful for manual testing; client flows usually deliver tokens elsewhere.
-            token = JWTHandler.generate_token(user_quota.id)
+            token = JWTHandler.generate_token(result.user_quota_id)
             return {"success": True, "message": "Pro activated", "access_token": token}
-        
         return {"success": True, "message": "Webhook processed"}
-    
+
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception:
         logger.exception("Webhook processing error")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Webhook processing failed: {str(e)}"
+            detail="Webhook processing failed"
         )
