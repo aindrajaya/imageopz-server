@@ -42,3 +42,9 @@ instances starting at once. We start with an empty Postgres (no data migration).
 - Run-time migrations are no longer implicit on Postgres: forgetting to migrate fails at the first query.
 - `alembic_version` (also in `public`) gets RLS deny-all in the baseline too: Alembic creates it before running revisions, and the owner role that runs migrations bypasses RLS.
 - Out of scope / follow-ups: `datetime.utcnow` (naive timestamps), rate limiting, uploads/queue, data migration from SQLite.
+
+
+## Reconciled 2026-10-15
+- Implemented on `main` via PR #1 (`f5c1266`). Status is still "proposed" in this file; changing it to "accepted" is an owner decision.
+- RLS on `alembic_version` (see decision 5) is implemented: `alembic/versions/0001_baseline.py:139-140`.
+- ADR-001 (payments ingress) and ADR-002 (hosting) were added on `docs/engineering-state` (T-DOCS-1b), status proposed.

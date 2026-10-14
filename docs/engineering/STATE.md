@@ -1,42 +1,57 @@
-# STATE — ImageOpz payments migration
+---
+project: imageopz-server
+updated: 2026-10-15 by Claude Code (task T-DOCS-1)
+---
 
-## Baseline
-- T-000 baseline: main@bee0a98.
-- T-001 working branch: test/webhook-characterization @ bee0a98 + uncommitted changes (not committed).
-- Backend: FastAPI + SQLAlchemy + SQLite (WAL), systemd + Nginx, no Docker.
-- Test env: Python 3.11.2 venv at `~/.venvs/imageopz` (outside repo); run `~/.venvs/imageopz/bin/pytest -q`. Suite: 27 passed (15 baseline + 12 characterization).
-- CI: `.github/workflows/backend-tests.yml` (Python 3.11), added in T-001, not yet run on GitHub.
+# STATE — ImageOpz
 
-## Payment boundary (see tasks/T-000-recon.md)
-- Webhook: POST /api/v1/webhooks/lemonsqueezy -> app/routes/optimization.py:handle_lemonsqueezy_webhook
-- Signature: X-Signature, HMAC-SHA256 hex of raw body, compare_digest (app/utils/security.py:WebhookValidator)
-- Writes: orders, users, users_quota, checkout_intents, jobs.expiry_date
-- Other writers of users_quota Pro fields: app/routes/session.py, app/routes/optimization.py
-- Known gaps (now pinned by tests/test_webhook_characterization.py): replay re-activates, refunds ignored, non-atomic commits, 500 echoes exception text, ip_hash-only Pro path.
+## Current objective
+Migrate ImageOpz to GCP Cloud Run + Supabase Postgres, and add a Go payments ingress as a portfolio proof,
+before applying to Sticker Mule on Mon 19 Oct 2026.
 
-## Tasks
-- T-000 recon: done (tasks/T-000-recon.md)
-- T-001 characterization tests + CI: done, awaiting review/commit (tasks/T-001-characterization.md)
+## Accepted baseline
+- `main` @ `f87894e` (PR #2, README DB section). Code baseline: `f5c1266` (PR #1, squash of feat/postgres-alembic: T-001 commits 00370e7 + b504211, `.gitignore` 3e6c6d8, T-003/T-003b/T-003b.1).
+- CI (`backend-tests`, sqlite + postgres legs): green on `main` runs 38638825622 (#1) and 38642599964 (#2); PR run 38638161620 green.
+- Tests: webhook characterization, job-status storage, RLS deny-all (incl. `alembic_version`, `alembic/versions/0001_baseline.py:139-140`).
+- Deployed: none — ImageOpz offline (VPS deleted). Postgres is empty/unused: the migration has never been run against Supabase (UNKNOWN beyond local Postgres 16.1).
+- Env: Python 3.11 venv `~/.venvs/imageopz`; no Docker; Postgres.app only for throwaway clusters (port 5433).
 
-## Decisions pending
-- Column-level write ownership between Go and FastAPI
-- Replay / refund semantics; fate of ip_hash path
-- Who owns DDL / migrations
+## Open tasks
+| Task | Scope | Status |
+|---|---|---|
+| T-003c | CI hygiene: pin `runs-on: ubuntu-24.04` (now `ubuntu-latest`), bump `actions/checkout@v4`, `setup-python@v5` to Node 24 majors; before 19 Oct | open |
+| T-004 | Payments activation service + internal endpoint (R1–R5) | open |
+| T-005 | Go ingress service (Cloud Run-ready) | open |
+| T-006 | Direct-to-R2 presigned uploads (backend + frontend) | open |
+| T-007 | Cloud Tasks worker, remove Redis | open |
+| T-008 | Containers + Cloud Run deploy: WIF, Secret Manager, Alembic migration job, Cloud Scheduler cleanup, XFF trusted-proxy fix, max-instances | open |
+Done: T-000, T-001, T-002 (recon), T-003 incl. T-003b and T-003b.1. See `tasks/`.
 
-## Next step
-- Review and commit T-001; then T-002 (fix agreed behaviors test-first, edit the "currently" tests deliberately).
+## Recent decisions (owner, 2026-10-14/15)
+ADRs in `adr/`: ADR-001 payments Go ingress — proposed, owner to accept · ADR-002 hosting Cloud Run — proposed, owner to accept · ADR-003 Postgres + Alembic — proposed (implemented on `main`).
+- Hosting (ADR-002, proposed, leaning adopt): Cloud Run only; Supabase Postgres; keep Cloudflare R2; Cloud Tasks replaces Redis;
+  direct-to-R2 presigned uploads (verified 2026-10-15 (Cloud Run quotas: HTTP/1 request max 32 MiB; no limit with HTTP/2)); min-instances 0 with a max-instances cap; services use the Supabase shared pooler
+  in transaction mode (6543), migration job uses session mode (5432); app and migration job connect as the table-owner role (RLS invariant).
+- Payments (ADR-001 option C, proposed, defaults assumed): Go ingress verifies `X-Signature`, dedupes in its own `payments` schema, enqueues via
+  Cloud Tasks to the API's internal endpoint; Python stays the single writer of users/users_quota/orders.
+  R1 activation once per order · R2 refund revokes Pro, status "refunded" · R3 non-activation events never overwrite an existing status ·
+  R4 one transaction per event · R5 no exception text in 500s.
+- Data: Postgres starts empty; archived SQLite + `.env` kept outside the repo; owner checks LemonSqueezy for live paid orders and re-grants manually.
+- Squash merges are the repo convention.
 
-## Update 2026-10-15 — T-003 Postgres + Alembic (uncommitted)
-- Branch: feat/postgres-alembic from 3e6c6d8. Added alembic/ (baseline 0001), alembic.ini, pinned `alembic==1.16.5`, `psycopg[binary]==3.2.13`.
-- Postgres: no DDL at app startup (init_db logs "Schema managed by Alembic"); SQLite legacy path kept (TODO(debt)). Pool: DB_POOL_SIZE (default 2), pre-ping, prepared statements off.
-- Models: pro_credits_used/pro_verified NOT NULL + server defaults; unique index on users.supabase_user_id; 10 duplicate single-column indexes removed; jobs.status VARCHAR+CHECK storing member NAMES (pinned by tests/test_job_status_storage.py).
-- Tests: SQLite 32 passed/1 skipped; Postgres (TEST_DATABASE_URL) 33 passed. CI matrix sqlite+postgres added (not yet run on GitHub).
-- Details: tasks/T-003-postgres-alembic.md, adr/ADR-003-postgres-alembic.md (proposed).
-- Open: Supabase pooler/TLS verification, utcnow cleanup, rate limiting, uploads/queue, Dockerfile, ownership of Go vs FastAPI writes.
-- Next step: review/commit T-003; verify against a Supabase staging DB; T-004 Dockerfile + Cloud Run migration Job.
+## Top risks / blockers
+- Rate limiting lost without Nginx (no app-level limiter).
+- X-Forwarded-For trust (`app/utils/security.py:IpFingerprint`).
+- Supabase Free pauses after 1 week inactivity / 500 MB.
+- LemonSqueezy checkout must stay disabled while offline (owner action).
+- Repo must pass a full-history secret scan (gitleaks) before going public.
+- Replay re-activates Pro, refunds ignored (pinned by tests; fixed by T-004).
 
-### T-003b polish (2026-10-15, uncommitted)
-- Baseline 0001 edited in place: RLS deny-all on all 5 app tables (PG only) + Postgres-only test; naming convention on Base.metadata (jobstatus CHECK pinned via conv); `users.supabase_user_id` no longer double-indexed.
-- Tests: SQLite 32 passed/3 skipped; Postgres 35 passed. `alembic check` clean. AC7: 3 cosmetic inspector diffs.
-- Note: app must connect as table owner (RLS bypass).
-- T-003b.1: RLS deny-all also on `alembic_version` (baseline + test). Postgres suite 36 passed; SQLite 32 passed/4 skipped; downgrade base -> upgrade head OK.
+## Standing authorization
+None. Each task grants its own authorization; the owner commits and pushes.
+
+## Owner inputs pending
+Supabase project region · frontend repo location · LemonSqueezy live-order check.
+
+## Next bounded step
+Owner commits this docs change, then T-003c (CI hygiene, small) before T-004.

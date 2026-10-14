@@ -26,3 +26,9 @@ Baseline: main@bee0a98. Date: 2026-10-14. Outcome: accepted.
 
 ## Open questions for the owner
 Same-VPS resource headroom for Go; refund/cancel semantics; whether replay re-extension is intended; use of the `access_token` in the webhook response; fate of the ip_hash path; production `DATABASE_URL`; backup plan for the SQLite file.
+
+
+## Reconciled 2026-10-15
+- Status: accepted 2026-10-14 (REPORTED by owner; no repo artifact beyond this file).
+- Baseline referenced here (`bee0a98`) is an ancestor of `main`. Findings 2, 3, 7, 8 and 9 are still open on `main` (f87894e): no webhook logic changed in T-003.
+- Superseded detail: "no Docker, no CI" in this file described `bee0a98`. A CI workflow exists since T-001/T-003 (`.github/workflows/backend-tests.yml`).

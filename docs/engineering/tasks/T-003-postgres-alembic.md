@@ -108,3 +108,11 @@ Notes
   - `alembic downgrade base && alembic upgrade head` -> pass; `alembic_version` kept RLS and holds `0001`; `alembic check` clean.
   - Postgres suite (`TEST_DATABASE_URL=...`): `36 passed`. SQLite suite: `32 passed, 4 skipped` (the 4 are Postgres-only).
 - Not committed.
+
+
+## Reconciled 2026-10-15
+- Merged as PR #1 (`feat/postgres alembic`), squash commit `f5c1266`, merged 2026-10-14T21:15:24Z. The "Not committed" lines above are superseded.
+- PR CI run 38638161620 (`feat/postgres-alembic`): success, legs `pytest (sqlite)` and `pytest (postgres)`. Post-merge run on `main` 38638825622: success, both legs.
+- Follow-up PR #2 (`docs(readme): database & migrations section (T-003)`), squash commit `f87894e`, merged 2026-10-14T21:44:44Z; CI run 38642599964 on `main`: success. The README section was not in PR #1.
+- T-003b.1 (RLS on `alembic_version`) is present on `main`: `alembic/versions/0001_baseline.py:139-140` (loop over `(*APP_TABLES, "alembic_version")`), test `tests/test_rls_deny_all.py::test_alembic_version_is_rls_protected_from_anon` (line 68).
+- Not verified here: any run of the migration against Supabase (never done; UNKNOWN).
