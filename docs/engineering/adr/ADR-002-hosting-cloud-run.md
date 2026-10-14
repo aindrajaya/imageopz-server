@@ -1,5 +1,5 @@
 # ADR-002 Hosting: Cloud Run + Supabase Postgres + R2 + Cloud Tasks
-Status: proposed (owner leaning to adopt, 2026-10-15; owner to accept)
+Status: accepted (owner, 2026-10-15)
 ## Context
 VPS deleted; ImageOpz offline; no paying clients; budget ~$10/month GCP credit; deployment is a portfolio piece.
 T-002: local-disk uploads shared by API and worker, Redis BLPOP worker, SQLite, Nginx-only rate limits, XFF trust.
