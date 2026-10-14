@@ -1,6 +1,6 @@
 ---
 project: imageopz-server
-updated: 2026-10-15 by Claude Code (task T-PRE-004)
+updated: 2026-10-15 by Claude Code (task T-004)
 ---
 
 # STATE - ImageOpz
@@ -10,9 +10,9 @@ Migrate ImageOpz to GCP Cloud Run + Supabase Postgres, and add a Go payments ing
 before applying to Sticker Mule on Mon 19 Oct 2026.
 
 ## Accepted baseline
-- `main` @ `d249de6` (PR #5 squash: ci pin ubuntu-24.04, actions/checkout@v7, actions/setup-python@v7).
+- `main` @ `da5ffac` (code at `d249de6`, PR #5 squash: ci pin ubuntu-24.04, actions/checkout@v7, actions/setup-python@v7).
 - CI run 38646026415 (push to main at d249de6): green on both legs (`pytest (sqlite)`, `pytest (postgres)`), no annotations.
-- Tests at d249de6: SQLite 32 passed, 4 skipped; Postgres 16.1 (throwaway cluster) 36 passed. The expected values in the T-PRE-004 prompt (32/3 and 35) predated T-003b.1 (+1 Postgres-only RLS test).
+- Tests at d249de6: SQLite 32 passed, 4 skipped; Postgres 16.1 (throwaway cluster) 36 passed. T-004 working tree: SQLite 69 passed, 4 skipped; Postgres 73 passed (after T-004c); `alembic heads` = 0002. The expected values in the T-PRE-004 prompt (32/3 and 35) predated T-003b.1 (+1 Postgres-only RLS test).
 - `alembic heads`: single head `0001`. `requirements.txt` has no `google-auth` yet (T-004 adds it).
 - Merged PRs: #1 f5c1266 (T-001 commits + .gitignore + T-003/T-003b/T-003b.1), #2 f87894e, #3 fee9269, #4 ddb07e6, #5 d249de6.
 - Deployed: none; ImageOpz offline (VPS deleted). The migration has never run against Supabase (UNKNOWN beyond local Postgres 16.1).
@@ -24,7 +24,7 @@ T-000, T-001 (squashed into #1), T-002, T-003/T-003b/T-003b.1 (#1), T-DOCS-1 (#3
 ## Open tasks
 | Task | Scope | Status |
 |---|---|---|
-| T-004 | Payments activation service + internal endpoint (R1-R5) | next |
+| T-004 | Payments activation service + internal endpoint (R1-R5) | implemented on branch feat/payments-activation (uncommitted); awaiting owner commit/PR; ADR-004 accepted (owner, 2026-10-15) |
 | T-005 | Go ingress service (Cloud Run-ready) | open |
 | T-006 | Direct-to-R2 presigned uploads (backend + frontend) | open |
 | T-007 | Cloud Tasks worker, remove Redis (+ update runbooks/local-run.md) | open |
@@ -49,7 +49,7 @@ T-000, T-001 (squashed into #1), T-002, T-003/T-003b/T-003b.1 (#1), T-DOCS-1 (#3
 - Supabase Free pauses after 1 week inactivity / 500 MB.
 - LemonSqueezy checkout must stay disabled while offline (owner action).
 - Repo must pass a full-history secret scan (gitleaks) before going public.
-- Replay re-activates Pro, refunds ignored (pinned by tests; fixed by T-004).
+- Replay/refund gaps fixed by T-004 (R1-R5) once merged; internal endpoint contract in tasks/T-004-payments-activation.md.
 
 ## Pending owner inputs (not blockers for T-004)
 Supabase region; frontend repo location; LemonSqueezy live-order check (re-grant any live paid orders manually);
@@ -59,4 +59,4 @@ checkout disabled while offline; gitleaks history scan before going public.
 None. Each task grants its own authorization; the owner commits and pushes.
 
 ## Next bounded step
-T-004 from `main` at the squash SHA of this PR (UNKNOWN until merged).
+Owner commits and merges T-004, then T-005 (Go ingress) against the internal endpoint contract.

@@ -174,8 +174,8 @@ def test_order_created_activates_pro_and_writes_all_tables(client, event_name):
 
 # ---------- 4. replay ----------
 
-def test_replay_order_created_currently_reactivates(client):
-    # Intentionally changes in T-002 (replay should be a no-op once the order is paid).
+def test_replay_order_created_is_single_activation(client):
+    # T-004 R1: a redelivered order_created is a no-op (was: re-activated, reset credits, extended expiry).
     from app.models import Order, UsersQuota
 
     email = f"{_uid('replay')}@example.com"
@@ -199,16 +199,18 @@ def test_replay_order_created_currently_reactivates(client):
         assert s.query(Order).filter_by(external_id=order_id).count() == 1  # unique: one order row
         q = s.query(UsersQuota).filter_by(session_id=session_id).one()
         assert s.query(UsersQuota).filter_by(session_id=session_id).count() == 1
-        assert q.pro_credits_used == 0              # credits reset again
-        assert q.pro_expiry_date > first_expiry     # expiry extended again
+        assert q.pro_credits_used == 9              # credits NOT reset
+        assert q.pro_expiry_date == first_expiry    # expiry NOT extended
     finally:
         s.close()
 
 
 # ---------- 5. unknown event ----------
 
-def test_unknown_event_stores_order_as_unknown_and_changes_no_quota(client):
-    from app.models import Order, OrderStatus
+def test_unknown_event_is_ignored_and_writes_nothing(client):
+    # T-004c: an authentic but unhandled event returns 200 {"status": "ignored"} with no DB writes
+    # (was: stored an order with status "unknown" and answered "Webhook processed").
+    from app.models import Order, ProcessedPaymentEvent
 
     s = _session()
     try:
@@ -220,13 +222,11 @@ def test_unknown_event_stores_order_as_unknown_and_changes_no_quota(client):
     res = _post(client, obj)
 
     assert res.status_code == 200
-    assert res.json() == {"success": True, "message": "Webhook processed"}
+    assert res.json() == {"status": "ignored"}
     s = _session()
     try:
-        order = s.query(Order).filter_by(external_id=order_id).one()
-        assert order.status == OrderStatus.UNKNOWN.value
-        assert order.event_name == "subscription_created"
-        assert order.user_id is None
+        assert s.query(Order).filter_by(external_id=order_id).first() is None
+        assert s.query(ProcessedPaymentEvent).filter_by(object_id=order_id).first() is None
         assert _quota_count(s) == quota_rows_before
     finally:
         s.close()
@@ -234,7 +234,8 @@ def test_unknown_event_stores_order_as_unknown_and_changes_no_quota(client):
 
 # ---------- 6. refund ----------
 
-def test_refund_event_does_not_revoke_pro(client):
+def test_refund_event_revokes_pro_and_marks_order_refunded(client):
+    # T-004 R2: refund revokes the entitlement and sets status "refunded" (was: Pro kept, status "unknown").
     from app.models import Order, OrderStatus, UsersQuota
 
     email = f"{_uid('refund')}@example.com"
@@ -249,12 +250,11 @@ def test_refund_event_does_not_revoke_pro(client):
     s = _session()
     try:
         q = s.query(UsersQuota).filter_by(session_id=session_id).one()
-        assert q.is_pro is True
-        assert q.pro_expiry_date > datetime.utcnow()
+        assert q.is_pro is False
+        assert q.pro_verified is False
         order = s.query(Order).filter_by(external_id=order_id).one()
-        # Current quirk: the refund overwrites the paid order's status/event with "unknown".
         assert order.event_name == "order_refunded"
-        assert order.status == OrderStatus.UNKNOWN.value
+        assert order.status == OrderStatus.REFUNDED.value
     finally:
         s.close()
 
@@ -330,31 +330,31 @@ def test_supabase_user_id_conflict_is_logged_and_skipped_but_still_200(client, c
 
 # ---------- 9. failure during activation ----------
 
-def test_exception_during_activation_returns_500_with_order_committed_but_not_activated(client, monkeypatch):
+def test_exception_during_activation_returns_500_and_leaves_no_partial_state(client, monkeypatch):
     """
-    Induced without editing app/: an invalid pro_tier_expiry_days makes timedelta() raise
-    after the Order commit and before any user/quota write.
+    T-004 R4/R5: a failure mid-activation rolls back everything (was: Order committed as paid but not
+    activated) and the 500 body carries no exception text (was: echoed).
+    Induced without editing app/: an invalid pro_tier_expiry_days makes timedelta() raise.
     """
-    from app.models import Order, OrderStatus, User
-    from app.routes import optimization
+    from app.models import Order, ProcessedPaymentEvent, User, UsersQuota
+    from app.services import payments
 
     email = f"{_uid('boom')}@example.com"
     session_id = _uid("sess")
-    monkeypatch.setattr(optimization.settings, "pro_tier_expiry_days", "not-an-int")
+    monkeypatch.setattr(payments.settings, "pro_tier_expiry_days", "not-an-int")
 
     obj, order_id = _payload(email=email, custom={"session_id": session_id})
     res = _post(client, obj)
 
     assert res.status_code == 500
-    assert "Webhook processing failed" in res.json()["detail"]  # error text is echoed to caller
+    assert res.json() == {"detail": "Webhook processing failed"}  # generic body, no exception text
+    assert "not-an-int" not in res.text
 
     s = _session()
     try:
-        from app.models import UsersQuota
-        order = s.query(Order).filter_by(external_id=order_id).one()
-        assert order.status == OrderStatus.PAID.value   # committed as paid...
-        assert order.user_id is None
-        assert s.query(User).filter_by(email=email).first() is None  # ...but nothing activated
+        assert s.query(Order).filter_by(external_id=order_id).first() is None
+        assert s.query(ProcessedPaymentEvent).filter_by(object_id=order_id).first() is None
+        assert s.query(User).filter_by(email=email).first() is None
         assert s.query(UsersQuota).filter_by(session_id=session_id).first() is None
     finally:
         s.close()
