@@ -1,10 +1,11 @@
 """
 SQLAlchemy database models for ImageOpz.
-Uses SQLite with WAL mode to prevent database locked errors.
+SQLite (WAL) for quick local runs; Postgres schema is owned by Alembic (see alembic/).
 """
 
-from sqlalchemy import Column, String, Integer, Boolean, DateTime, Float, Text, Enum, Index, create_engine, ForeignKey, UniqueConstraint
+from sqlalchemy import MetaData, Column, String, Integer, Boolean, DateTime, Float, Text, Enum, Index, create_engine, false, ForeignKey, UniqueConstraint
 from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.sql.elements import conv
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime, timedelta
 import enum
@@ -15,7 +16,17 @@ from app.config import settings
 
 logger = logging.getLogger("imageopz.models")
 
-Base = declarative_base()
+# Deterministic constraint/index names so Alembic revisions are portable across backends.
+# Explicitly named objects (e.g. idx_users_supabase_user_id_unique) keep their names.
+NAMING_CONVENTION = {
+    "ix": "ix_%(column_0_label)s",
+    "uq": "uq_%(table_name)s_%(column_0_name)s",
+    "ck": "ck_%(table_name)s_%(constraint_name)s",
+    "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
+    "pk": "pk_%(table_name)s",
+}
+
+Base = declarative_base(metadata=MetaData(naming_convention=NAMING_CONVENTION))
 
 
 class JobStatus(str, enum.Enum):
@@ -52,13 +63,14 @@ class User(Base):
 
     id = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
     email = Column(String(320), unique=True, index=True, nullable=False)
-    supabase_user_id = Column(String(128), unique=False, index=True, nullable=True)
+    # Indexed by the unique index idx_users_supabase_user_id_unique (see __table_args__).
+    supabase_user_id = Column(String(128), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     __table_args__ = (
-        Index("idx_user_email", "email"),
-        Index("idx_users_supabase_user_id", "supabase_user_id"),
+        # Same name as the legacy raw-SQL index created in init_db (SQLite) so both paths agree.
+        Index("idx_users_supabase_user_id_unique", "supabase_user_id", unique=True),
     )
 
 
@@ -73,20 +85,16 @@ class UsersQuota(Base):
     user_id = Column(String(64), ForeignKey("users.id"), nullable=True, index=True)
     ip_hash = Column(String(255), index=True, nullable=True)
     session_id = Column(String(255), index=True, nullable=True)
-    credits_used = Column(Integer, default=0)
-    is_pro = Column(Boolean, default=False)
+    credits_used = Column(Integer, default=0, server_default="0")
+    is_pro = Column(Boolean, default=False, server_default=false())
     pro_expiry_date = Column(DateTime, nullable=True)
-    pro_credits_used = Column(Integer, default=0)
-    pro_verified = Column(Boolean, default=False)
+    pro_credits_used = Column(Integer, nullable=False, default=0, server_default="0")
+    pro_verified = Column(Boolean, nullable=False, default=False, server_default=false())
     pro_source = Column(String(32), nullable=True)  # e.g. 'webhook' | 'restore' | 'unknown'
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    __table_args__ = (
-        Index("idx_ip_hash", "ip_hash"),
-        Index("idx_session_id", "session_id"),
-        Index("idx_user_id", "user_id"),
-    )
+
 
 
 class Order(Base):
@@ -112,8 +120,6 @@ class Order(Base):
     __table_args__ = (
         UniqueConstraint("provider", "external_id", name="uq_orders_provider_external_id"),
         Index("idx_orders_provider_external_id", "provider", "external_id"),
-        Index("idx_orders_user_id", "user_id"),
-        Index("idx_orders_email", "email"),
     )
 
 class CheckoutIntent(Base):
@@ -160,7 +166,12 @@ class Job(Base):
     session_id = Column(String(255), index=True)
     user_quota_id = Column(String(64), index=True)
     
-    status = Column(Enum(JobStatus), default=JobStatus.PENDING, index=True)
+    # VARCHAR + CHECK on every backend (conv() keeps the constraint name 'jobstatus', bypassing the ck_ convention); stores the member NAME (e.g. 'PENDING'), same as before.
+    status = Column(
+        Enum(JobStatus, native_enum=False, create_constraint=True, name=conv("jobstatus"), length=10),
+        default=JobStatus.PENDING,
+        index=True,
+    )
     
     # File information
     original_filename = Column(String(255))
@@ -195,11 +206,6 @@ class Job(Base):
     expiry_date = Column(DateTime, index=True)
     deleted_at = Column(DateTime, nullable=True)
     
-    __table_args__ = (
-        Index("idx_status", "status"),
-        Index("idx_expiry_date", "expiry_date"),
-        Index("idx_user_quota_id", "user_quota_id"),
-    )
 
 
 class Database:
@@ -210,35 +216,49 @@ class Database:
         self.SessionLocal = None
     
     def init_db(self):
-        """Initialize database connection and create tables"""
-        # Create engine with SQLite and WAL mode
-        connect_args = {}
-        if "sqlite" in settings.database_url:
+        """Initialize database connection; create tables only on the legacy SQLite path"""
+        url = settings.sqlalchemy_database_url()
+        is_sqlite = "sqlite" in url
+
+        engine_kwargs = {"echo": settings.database_echo}
+        if is_sqlite:
             # check_same_thread=False: allow cross-thread access (worker thread + main thread)
             # timeout=30: wait up to 30s if database is locked (handles API/Worker concurrency)
-            connect_args = {"check_same_thread": False, "timeout": 30}
-        
-        self.engine = create_engine(
-            settings.database_url,
-            echo=settings.database_echo,
-            connect_args=connect_args if connect_args else {}
-        )
-        
+            engine_kwargs["connect_args"] = {"check_same_thread": False, "timeout": 30}
+        else:
+            engine_kwargs.update(
+                pool_pre_ping=True,
+                pool_size=settings.db_pool_size,
+                max_overflow=0,
+            )
+            if url.startswith("postgresql+psycopg:"):
+                # psycopg3 auto-prepares statements after 5 executions; Supabase's transaction
+                # pooler does not support prepared statements. None disables them.
+                # sslmode comes from the URL query string.
+                engine_kwargs["connect_args"] = {"prepare_threshold": None}
+
+        self.engine = create_engine(url, **engine_kwargs)
+
         # Enable WAL mode for SQLite to prevent locked database errors
-        if "sqlite" in settings.database_url:
+        if is_sqlite:
             with self.engine.connect() as conn:
                 conn.exec_driver_sql("PRAGMA journal_mode=WAL;")
                 conn.exec_driver_sql("PRAGMA synchronous=NORMAL;")
                 conn.exec_driver_sql("PRAGMA foreign_keys=ON;")
                 conn.commit()
-        
+
         # Create session factory
         self.SessionLocal = sessionmaker(
             autocommit=False,
             autoflush=False,
             bind=self.engine
         )
-        
+
+        if not is_sqlite:
+            logger.info("Schema managed by Alembic; skipping DDL (run `alembic upgrade head`)")
+            return
+
+        # TODO(debt): remove once Postgres is the default for local dev
         # Create all tables
         Base.metadata.create_all(bind=self.engine)
 
