@@ -1,6 +1,6 @@
 ---
 project: imageopz-server
-updated: 2026-10-15 by Claude Code (task T-DOCS-1)
+updated: 2026-10-15 by Claude Code (task T-003c)
 ---
 
 # STATE — ImageOpz
@@ -19,7 +19,7 @@ before applying to Sticker Mule on Mon 19 Oct 2026.
 ## Open tasks
 | Task | Scope | Status |
 |---|---|---|
-| T-003c | CI hygiene: pin `runs-on: ubuntu-24.04` (now `ubuntu-latest`), bump `actions/checkout@v4`, `setup-python@v5` to Node 24 majors; before 19 Oct | open |
+| T-003c | CI hygiene: `runs-on: ubuntu-24.04`; `actions/checkout@v7`, `actions/setup-python@v7` (both `using: node24`, checked in each tag's action.yml) | done (pending merge, branch ci/pin-runner) |
 | T-004 | Payments activation service + internal endpoint (R1–R5) | open |
 | T-005 | Go ingress service (Cloud Run-ready) | open |
 | T-006 | Direct-to-R2 presigned uploads (backend + frontend) | open |
@@ -54,4 +54,4 @@ None. Each task grants its own authorization; the owner commits and pushes.
 Supabase project region · frontend repo location · LemonSqueezy live-order check.
 
 ## Next bounded step
-Owner commits this docs change, then T-003c (CI hygiene, small) before T-004.
+Owner merges T-003c (CI must pass on the new runner and action majors), then T-004.

@@ -7,7 +7,7 @@ on:
 
 jobs:
   pytest:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -28,8 +28,8 @@ jobs:
       # Only set for the postgres leg; conftest creates and drops a fresh database.
       TEST_DATABASE_URL: ${{ matrix.db == 'postgres' && 'postgresql+psycopg://postgres:dev@localhost:5432/postgres' || '' }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
           cache: pip
