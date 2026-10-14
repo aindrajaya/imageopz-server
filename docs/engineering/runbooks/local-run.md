@@ -7,4 +7,4 @@ Read when you need a running API or worker (tests do not need Redis).
 - API (FastAPI/uvicorn, port 8000): `python run.py --reload`.
 - Worker plus cleanup scheduler (separate process): `python run_worker.py`.
 - OpenAPI spec: `python scripts/generate_openapi.py` regenerates `docs/openapi.json`.
-- Memory watch for the API and worker processes: `python monitor_memory.py` (written for the old VPS; low value on Cloud Run).
+- LEGACY: `python monitor_memory.py` watches API and worker memory (written for the old VPS; low value on Cloud Run; removal is T-007).

@@ -23,6 +23,7 @@ Updated 2026-10-15 by Claude Code (task T-DOCS-1).
 | Id | Item | Tag |
 |---|---|---|
 | S4 | Cache Google OIDC certs for internal auth (`app/utils/internal_auth.py` builds a fresh `google_requests.Request()` per call, fetching certs every time). Use a module-level Request with a cached session. | T-008 |
+| G1 | Go pool (8 conns) x Cloud Run instances must fit the Supabase pooler limit; set `--concurrency` and `--max-instances` accordingly. | T-008 |
 
 ## Protected behaviors
 | Behavior | Enforced by |

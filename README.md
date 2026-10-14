@@ -29,7 +29,7 @@ FastAPI backend for ImageOpz (bulk image optimization + async worker + R2 storag
 - Decision record: `docs/engineering/adr/ADR-003-postgres-alembic.md`
 
 ## Production
-- Use systemd and run API + worker as separate services: `docs/production-runbook.md`
+- Target hosting is Cloud Run + Supabase Postgres (`docs/engineering/adr/ADR-002-hosting-cloud-run.md`); the VPS/systemd/Nginx setup was removed. Deployment lands in task T-008.
 
 ## OpenAPI spec
 - Generate: `python scripts/generate_openapi.py`

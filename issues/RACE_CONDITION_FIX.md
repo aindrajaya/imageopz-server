@@ -253,7 +253,6 @@ git checkout app/models.py
 
 - [PRD Backend v3](docs/PRD-backend.v3.md) - Arsitektur produksi
 - [Local Development](docs/local-development.md) - Setup dev environment
-- [Production Runbook](docs/production-runbook.md) - Deployment guide
 - [Worker Race Condition Notes](issues/worker.has-race-condition.md) - Detail teknis masalah
 
 ---
