@@ -1,6 +1,6 @@
 # ADR-003: Postgres support with Alembic-owned schema
 
-Status: proposed
+Status: accepted (owner, 2026-10-15)
 Date: 2026-10-15
 Context task: T-003
 
@@ -45,6 +45,6 @@ instances starting at once. We start with an empty Postgres (no data migration).
 
 
 ## Reconciled 2026-10-15
-- Implemented on `main` via PR #1 (`f5c1266`). Status is still "proposed" in this file; changing it to "accepted" is an owner decision.
+- Implemented on `main` via PR #1 (`f5c1266`). Status was accepted by the owner on 2026-10-15 (T-PRE-004).
 - RLS on `alembic_version` (see decision 5) is implemented: `alembic/versions/0001_baseline.py:139-140`.
 - ADR-001 (payments ingress) and ADR-002 (hosting) were added on `docs/engineering-state` (T-DOCS-1b), status proposed.

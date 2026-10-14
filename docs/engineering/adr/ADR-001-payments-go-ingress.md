@@ -1,5 +1,5 @@
 # ADR-001 Payments ingress in Go (LemonSqueezy webhooks)
-Status: proposed (defaults stated 2026-10-15; owner did not object; owner to accept)
+Status: accepted (owner, 2026-10-15)
 ## Context
 T-000: the FastAPI webhook writes orders, users, users_quota, checkout_intents, jobs.expiry_date; users_quota also has
 other FastAPI writers (session restore, credit usage). Replay re-activated Pro; refunds were ignored; commits were

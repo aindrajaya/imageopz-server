@@ -44,6 +44,7 @@ Shared agent memory (CLAUDE.md is a symlink to this file). Every rule carries a 
 ## Learned (date - rule - why)
 - 2026-10-15 - STATE.md is a snapshot: overwrite it each task; append only to task files - keeps STATE short and current
 - 2026-10-15 - Squash merges: reference the squash SHA and PR number, not branch commits - branch SHAs vanish from main
+- 2026-10-15 - Merge only after the PR's own checks pass (`gh pr checks <n> --watch && gh pr merge`) - `gh run watch` can select another branch's run.
 
 ## Runbooks (docs/engineering/runbooks/)
 - local-run.md - start the API and worker locally, regenerate the OpenAPI spec

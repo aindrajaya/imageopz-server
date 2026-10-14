@@ -1,42 +1,46 @@
 ---
 project: imageopz-server
-updated: 2026-10-15 by Claude Code (task T-003c)
+updated: 2026-10-15 by Claude Code (task T-PRE-004)
 ---
 
-# STATE — ImageOpz
+# STATE - ImageOpz
 
 ## Current objective
 Migrate ImageOpz to GCP Cloud Run + Supabase Postgres, and add a Go payments ingress as a portfolio proof,
 before applying to Sticker Mule on Mon 19 Oct 2026.
 
 ## Accepted baseline
-- `main` @ `f87894e` (PR #2, README DB section). Code baseline: `f5c1266` (PR #1, squash of feat/postgres-alembic: T-001 commits 00370e7 + b504211, `.gitignore` 3e6c6d8, T-003/T-003b/T-003b.1).
-- CI (`backend-tests`, sqlite + postgres legs): green on `main` runs 38638825622 (#1) and 38642599964 (#2); PR run 38638161620 green.
-- Tests: webhook characterization, job-status storage, RLS deny-all (incl. `alembic_version`, `alembic/versions/0001_baseline.py:139-140`).
-- Deployed: none — ImageOpz offline (VPS deleted). Postgres is empty/unused: the migration has never been run against Supabase (UNKNOWN beyond local Postgres 16.1).
+- `main` @ `d249de6` (PR #5 squash: ci pin ubuntu-24.04, actions/checkout@v7, actions/setup-python@v7).
+- CI run 38646026415 (push to main at d249de6): green on both legs (`pytest (sqlite)`, `pytest (postgres)`), no annotations.
+- Tests at d249de6: SQLite 32 passed, 4 skipped; Postgres 16.1 (throwaway cluster) 36 passed. The expected values in the T-PRE-004 prompt (32/3 and 35) predated T-003b.1 (+1 Postgres-only RLS test).
+- `alembic heads`: single head `0001`. `requirements.txt` has no `google-auth` yet (T-004 adds it).
+- Merged PRs: #1 f5c1266 (T-001 commits + .gitignore + T-003/T-003b/T-003b.1), #2 f87894e, #3 fee9269, #4 ddb07e6, #5 d249de6.
+- Deployed: none; ImageOpz offline (VPS deleted). The migration has never run against Supabase (UNKNOWN beyond local Postgres 16.1).
 - Env: Python 3.11 venv `~/.venvs/imageopz`; no Docker; Postgres.app only for throwaway clusters (port 5433).
+
+## Done
+T-000, T-001 (squashed into #1), T-002, T-003/T-003b/T-003b.1 (#1), T-DOCS-1 (#3), T-DOCS-2 (#4), T-003c (#5). See `tasks/`.
 
 ## Open tasks
 | Task | Scope | Status |
 |---|---|---|
-| T-003c | CI hygiene: `runs-on: ubuntu-24.04`; `actions/checkout@v7`, `actions/setup-python@v7` (both `using: node24`, checked in each tag's action.yml) | done (pending merge, branch ci/pin-runner) |
-| T-004 | Payments activation service + internal endpoint (R1–R5) | open |
+| T-004 | Payments activation service + internal endpoint (R1-R5) | next |
 | T-005 | Go ingress service (Cloud Run-ready) | open |
 | T-006 | Direct-to-R2 presigned uploads (backend + frontend) | open |
-| T-007 | Cloud Tasks worker, remove Redis | open |
+| T-007 | Cloud Tasks worker, remove Redis (+ update runbooks/local-run.md) | open |
 | T-008 | Containers + Cloud Run deploy: WIF, Secret Manager, Alembic migration job, Cloud Scheduler cleanup, XFF trusted-proxy fix, max-instances | open |
-Done: T-000, T-001, T-002 (recon), T-003 incl. T-003b and T-003b.1. See `tasks/`.
 
-## Recent decisions (owner, 2026-10-14/15)
-ADRs in `adr/`: ADR-001 payments Go ingress — proposed, owner to accept · ADR-002 hosting Cloud Run — proposed, owner to accept · ADR-003 Postgres + Alembic — proposed (implemented on `main`).
-- Hosting (ADR-002, proposed, leaning adopt): Cloud Run only; Supabase Postgres; keep Cloudflare R2; Cloud Tasks replaces Redis;
-  direct-to-R2 presigned uploads (verified 2026-10-15 (Cloud Run quotas: HTTP/1 request max 32 MiB; no limit with HTTP/2)); min-instances 0 with a max-instances cap; services use the Supabase shared pooler
-  in transaction mode (6543), migration job uses session mode (5432); app and migration job connect as the table-owner role (RLS invariant).
-- Payments (ADR-001 option C, proposed, defaults assumed): Go ingress verifies `X-Signature`, dedupes in its own `payments` schema, enqueues via
-  Cloud Tasks to the API's internal endpoint; Python stays the single writer of users/users_quota/orders.
-  R1 activation once per order · R2 refund revokes Pro, status "refunded" · R3 non-activation events never overwrite an existing status ·
-  R4 one transaction per event · R5 no exception text in 500s.
-- Data: Postgres starts empty; archived SQLite + `.env` kept outside the repo; owner checks LemonSqueezy for live paid orders and re-grants manually.
+## Decisions (owner, 2026-10-15)
+- ADR-001 payments Go ingress: accepted. ADR-002 hosting Cloud Run: accepted. ADR-003 Postgres + Alembic: accepted.
+- Hosting: Cloud Run only; Supabase Postgres; keep Cloudflare R2; Cloud Tasks replaces Redis; direct-to-R2 presigned uploads
+  (verified 2026-10-15, Cloud Run quotas: HTTP/1 request max 32 MiB, no limit with HTTP/2); min-instances 0 with a max-instances cap;
+  services use the Supabase shared pooler in transaction mode (6543), the migration job uses session mode (5432);
+  app and migration job connect as the table-owner role (RLS invariant).
+- Payments: Go ingress verifies `X-Signature`, dedupes in its own `payments` schema, enqueues via Cloud Tasks to the API's internal
+  endpoint; Python stays the single writer of users/users_quota/orders.
+  R1 activation once per order; R2 refund revokes Pro, status "refunded"; R3 non-activation events never overwrite an existing
+  status; R4 one transaction per event; R5 no exception text in 500s.
+- Data: Postgres starts empty; archived SQLite + `.env` kept outside the repo.
 - Squash merges are the repo convention.
 
 ## Top risks / blockers
@@ -47,11 +51,12 @@ ADRs in `adr/`: ADR-001 payments Go ingress — proposed, owner to accept · ADR
 - Repo must pass a full-history secret scan (gitleaks) before going public.
 - Replay re-activates Pro, refunds ignored (pinned by tests; fixed by T-004).
 
+## Pending owner inputs (not blockers for T-004)
+Supabase region; frontend repo location; LemonSqueezy live-order check (re-grant any live paid orders manually);
+checkout disabled while offline; gitleaks history scan before going public.
+
 ## Standing authorization
 None. Each task grants its own authorization; the owner commits and pushes.
 
-## Owner inputs pending
-Supabase project region · frontend repo location · LemonSqueezy live-order check.
-
 ## Next bounded step
-Owner merges T-003c (CI must pass on the new runner and action majors), then T-004.
+T-004 from `main` at the squash SHA of this PR (UNKNOWN until merged).
