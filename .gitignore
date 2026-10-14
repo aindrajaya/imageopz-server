@@ -9,3 +9,5 @@ branch_structure.json
 
 # Editor config (auto-run tasks were abused for malware)
 .vscode/
+
+.DS_Store
