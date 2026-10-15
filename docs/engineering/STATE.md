@@ -50,20 +50,20 @@ users/users_quota/orders. Squash merges. Uploads use their own R2 token (no fall
 |---|---|---|
 | T-006b | Presigned uploads backend, phase 1 | done locally; owner pushes and opens the PR |
 | T-006b2 | Remove `/optimize`, local-disk upload code and `UPLOAD_DIR`, Alembic 0005 drop `jobs.upload_path`, regenerate OpenAPI, update runbooks/local-run.md | next |
-| T-006c | Frontend upload change in imageopz-ui (contract: contracts/uploads-api.md) | open; needs U6 first |
+| T-006c | Frontend upload change in imageopz-ui (contract: contracts/uploads-api.md) | open (uploads token scoped, U6 done) |
 | T-DOCS-UI | Docs for imageopz-ui (other repo) | open |
 | T-007 | Cloud Tasks worker, remove Redis, schedule the upload sweeper (+ runbooks/local-run.md, drop monitor_memory.py) | open |
 | T-008 | Containers + Cloud Run deploy; checklist in registers.md | open |
 
 ## Owner items
 - Discard up to three LemonSqueezy checkout objects created by T-006b test runs (registers.md "Incidents").
-- Create an R2 token scoped to `imageopz-uploads`, set R2_UPLOADS_*; then run the least-privilege check (U6).
+- Replace the account-wide outputs token with one scoped to `imageopz` and revoke the old one (U15).
 - Wipe the Windows machine before any reuse. GitHub Support purge: pending confirmation.
 
 ## Top risks / blockers
 - Rate limiting lost without Nginx (presign now included, U1); X-Forwarded-For trust (`app/utils/security.py:IpFingerprint`); Supabase Free pauses after 1 week inactivity / 500 MB.
 - Go ingress, Cloud Tasks and OIDC never exercised against GCP; docker build only proven in CI.
-- Open follow-ups S1, S6, G1, S4, U1-U7 in registers.md.
+- Open follow-ups S1, S6, G1, S4, U1-U5, U7-U15 in registers.md.
 - Never run install/dev/build/test on uninspected commits, or on UI commits before fd1032e; tests never load .env or reach external hosts (AGENTS.md).
 
 ## Standing authorization

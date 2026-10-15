@@ -49,13 +49,15 @@ Updated 2026-10-15 by Claude Code (task T-006b).
 | U3 | R2 lifecycle rule on `imageopz-uploads` (`uploads/` older than 1 day) as the backstop for best-effort deletes; owner verifies in Cloudflare. | T-008 |
 | U4 | Pillow's own limit (89.5 MP warning, 179 MP error) is below MAX_IMAGE_PIXELS (250 MP), so the effective limit is ~179 MP at `/complete` and in the worker (pre-existing). Decide and set `Image.MAX_IMAGE_PIXELS` deliberately. | backlog |
 | U5 | `/complete` reads 64 KiB (D3): a JPEG with >64 KiB of metadata before the frame header (e.g. a 200 KB ICC profile) is rejected `invalid_image`. Option: second ranged read up to 1 MiB. | T-006c feedback |
-| U6 | Scoped uploads token: create an R2 token limited to `imageopz-uploads`, set R2_UPLOADS_*, run the least-privilege check (T-006b step 7). Phase 0 ran with the outputs-bucket token. | before T-006c |
+| U6 | DONE 2026-10-15: uploads token limited to `imageopz-uploads` (ListBuckets and outputs bucket 403; own bucket works), T-006b step 7. | - |
 | U7 | T-006b2: remove `/optimize`, local-disk code, `UPLOAD_DIR`, Alembic 0005 drops `jobs.upload_path`, regenerate OpenAPI, update `runbooks/local-run.md`. | next |
 | U8 | A job can stay PENDING, never queued, credit spent: process dies between the `/complete` commit and enqueue, or the revert commit fails. Sweeper (or `/complete`) should re-enqueue or fail PENDING upload jobs older than N minutes. Cloud Tasks (T-007) changes the enqueue step. | T-007 |
 | U9 | Concurrent `/complete` calls: B can answer "pending" for a job that A then reverts to UPLOADING after an enqueue failure; a client trusting B never retries (job expires, credit refunded, not processed). Same fix as U8. | T-007 |
 | U10 | `/complete` ownership uses `jobs.user_quota_id == current quota`; with several quota rows per user (rehydration) an authenticated user can get 404 on their own jobs. `/status` matches on `user_id`; align for authenticated callers. | T-006c feedback |
 | U11 | Worker `processing_error` strings reach clients via `/status` (e.g. "uploads bucket credentials not configured"); return generic messages, log details. | backlog |
 | U12 | Legacy `/optimize` writes credit counters read-then-write and can overwrite a presign reservation; removed with T-006b2. | T-006b2 |
+| U14 | Worker marks a job DONE without uploading the result when outputs storage is not configured (`app/workers/job_worker.py`, `if r2_storage:`); it should fail the job (pre-existing). | T-006b2 |
+| U15 | The outputs token (R2_ACCESS_KEY_ID) is account-wide: ListBuckets 200 and it can write `imageopz-uploads`. Replace it with a token scoped to `imageopz` only, revoke the old one, re-run the scope check. | before T-008 |
 | U13 | A Pro renewal resets `pro_credits_used`; a reservation made before and released after decrements credits spent after the renewal (floor at 0 only). Decide with S6. | payments follow-up |
 
 ## Protected behaviors

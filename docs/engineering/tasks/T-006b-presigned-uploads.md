@@ -41,12 +41,22 @@ with the scoped token is part of step 7.
 Design consequence: R2 enforces the signed Content-Length, so presign binds it (`BIND_CONTENT_LENGTH = True`); HEAD at
 `/complete` re-checks size and type.
 
-## Step 7 least-privilege check (R2_UPLOADS_* only)
-ATTEMPTED, INCONCLUSIVE. The local R2_UPLOADS_ACCESS_KEY_ID and R2_UPLOADS_SECRET_ACCESS_KEY hold the same 64-character
-value (an Access Key ID is 32 characters), so R2 refused every call with 400 InvalidArgument ("Credential access key has
-length 64, should be 32") before any permission check: outputs HEAD 400, outputs PUT 400, uploads presigned PUT 400,
-HEAD 400, DELETE 400. No object could be written. Re-run after the owner sets the 32-character Access Key ID (U6).
-Expected: outputs HEAD/PUT 403; uploads presigned PUT 200, HEAD 200, DELETE 204; no objects left.
+## Step 7 least-privilege check (R2_UPLOADS_* only) - PASSED (2026-10-15, after the owner rotated tokens)
+Earlier attempts were invalid: the uploads key fields held a 64- then a 31-character value (400 InvalidArgument), and
+`R2_BUCKET_NAME` briefly pointed at imageopz-uploads. Final configuration: outputs bucket `imageopz` (R2_BUCKET_NAME,
+R2_ACCESS_KEY_ID/R2_SECRET_ACCESS_KEY), uploads bucket `imageopz-uploads` (R2_UPLOADS_*), different key ids (owner choice:
+two buckets, two tokens).
+
+| Token | Check | Result |
+|---|---|---|
+| uploads | ListBuckets | 403 AccessDenied |
+| uploads | HEAD / PUT on the outputs bucket `imageopz` | 403 / 403 AccessDenied |
+| uploads | presigned PUT (Content-Type + Content-Length bound) / HEAD / DELETE on `imageopz-uploads` | 200 / 200 / 204; HEAD afterwards 404 |
+| outputs | ListBuckets | 200 (not bucket-scoped, U15) |
+| outputs | PUT on `imageopz-uploads` | 200, deleted at once (204) (not bucket-scoped, U15) |
+| outputs | presigned PUT / HEAD / DELETE on `imageopz` | 200 / 200 / 204 |
+
+Spike objects left: 0 in both buckets. The presigned PUT with the scoped token confirms the phase 0 results.
 
 ## What changed
 - Commit 1 `refactor: extract identity and quota resolution into quota_context (no behavior change)`: session id,
@@ -87,7 +97,7 @@ Also verified: all 54 in-tree `__pycache__` files (31 compiled under /Users/maci
 U1 presign rate limiting (T-008); U2 sweeper scheduling (T-007/T-008); U3 R2 lifecycle backstop on uploads/;
 U4 Pillow pixel limit below MAX_IMAGE_PIXELS (pre-existing); U5 64 KiB header read rejects JPEGs with >64 KiB leading
 metadata (reproduced with a 200 KB ICC profile); U6 scoped uploads token + least-privilege check; U7 T-006b2.
-U8-U13 from the independent review. Debt: legacy auth_token in presign; SQLite dev DBs need recreating after 0004;
+U8-U13 from the independent review; U14 worker marks DONE without output storage; U15 outputs token account-wide. Debt: legacy auth_token in presign; SQLite dev DBs need recreating after 0004;
 local-disk path until T-006b2.
 
 ## Independent review (subagent, fresh context, read-only; findings verbatim)
