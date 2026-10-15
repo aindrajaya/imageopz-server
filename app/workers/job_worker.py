@@ -243,23 +243,17 @@ class JobWorker:
             
             # Strip EXIF and metadata
             try:
-                if job.source_object_key:
-                    # Final guard (D3): the bytes may have been replaced after /complete via the still-valid URL.
-                    source_path = self._download_source(job)
-                    formats = SecurityValidator.pil_formats(job.declared_content_type)
-                    with open(source_path, "rb") as fh:
-                        valid, magic_mime = SecurityValidator.validate_magic_number(fh.read(64 * 1024))
-                    if not formats or not valid or magic_mime != job.declared_content_type:
-                        raise Exception("Source content does not match the declared image type")
-                    SecurityValidator.validate_decompression_bomb_protection_path(source_path, formats)
-                    file_data, width, height = SecurityValidator.strip_exif_and_metadata_path_with_dimensions(source_path, formats)
-                elif job.upload_path:
-                    file_data, width, height = SecurityValidator.strip_exif_and_metadata_path_with_dimensions(job.upload_path)
-                else:
-                    raw = self._get_file_data(job_id)
-                    if not raw:
-                        raise Exception("Original file not found")
-                    file_data, width, height = SecurityValidator.strip_exif_and_metadata_with_dimensions(raw)
+                if not job.source_object_key:
+                    raise Exception("Original file not found")
+                # Final guard (D3): the bytes may have been replaced after /complete via the still-valid URL.
+                source_path = self._download_source(job)
+                formats = SecurityValidator.pil_formats(job.declared_content_type)
+                with open(source_path, "rb") as fh:
+                    valid, magic_mime = SecurityValidator.validate_magic_number(fh.read(64 * 1024))
+                if not formats or not valid or magic_mime != job.declared_content_type:
+                    raise Exception("Source content does not match the declared image type")
+                SecurityValidator.validate_decompression_bomb_protection_path(source_path, formats)
+                file_data, width, height = SecurityValidator.strip_exif_and_metadata_path_with_dimensions(source_path, formats)
 
                 job.original_width = width
                 job.original_height = height
@@ -289,24 +283,26 @@ class JobWorker:
             
             self.queue.set_job_progress(job_id, 70, "Uploading to storage")
             
-            # Upload to R2
+            # Upload to R2; a job is never DONE without an uploaded result (U14)
             if r2_storage:
                 success, object_key, url_or_error = r2_storage.upload_optimized_image(
                     optimized_data,
                     job.original_filename,
                     job_id
                 )
-                
-                if not success:
-                    job.status = JobStatus.FAILED
-                    job.processing_error = f"R2 upload failed: {url_or_error}"
-                    job.processing_finished_at = datetime.utcnow()
-                    job.processing_duration_ms = int((time.perf_counter() - t0) * 1000)
-                    self.db_session.commit()
-                    return False
-                
-                job.r2_url = url_or_error
-                job.r2_object_key = object_key
+            else:
+                success, object_key, url_or_error = False, None, "outputs storage not configured"
+
+            if not success:
+                job.status = JobStatus.FAILED
+                job.processing_error = f"R2 upload failed: {url_or_error}"
+                job.processing_finished_at = datetime.utcnow()
+                job.processing_duration_ms = int((time.perf_counter() - t0) * 1000)
+                self.db_session.commit()
+                return False
+
+            job.r2_url = url_or_error
+            job.r2_object_key = object_key
             
             # Update job with results
             job.optimized_size = optimized_size
@@ -317,10 +313,7 @@ class JobWorker:
             self.queue.set_job_progress(job_id, 100, "Optimization complete")
             
             self.db_session.commit()
-            
-            # Clean up temporary file
-            self._cleanup_temp_file(job_id)
-            
+
             return True
         
         except Exception as e:
@@ -370,63 +363,6 @@ class JobWorker:
                 return
             delete_source_best_effort(store, job.source_object_key)
 
-    def _get_file_data(self, job_id: str) -> Optional[bytes]:
-        """
-        Retrieve original file data for job.
-        In a production system, this would retrieve from temp storage or a file server.
-        """
-        try:
-            job = self.db_session.query(Job).filter_by(id=job_id).first()
-            if not job:
-                return None
-
-            # Prefer local disk (streamed from upload endpoint)
-            if job.upload_path:
-                import os
-                if os.path.exists(job.upload_path):
-                    with open(job.upload_path, "rb") as f:
-                        return f.read()
-
-            # Fallback: Redis blob (legacy path)
-            if self.queue.redis_client:
-                data = self.queue.redis_client.get(f"file:{job_id}")
-                return data
-
-            return None
-        except Exception:
-            return None
-    
-    def _cleanup_temp_file(self, job_id: str):
-        """Remove temporary file after processing"""
-        try:
-            job = self.db_session.query(Job).filter_by(id=job_id).first()
-            if not job:
-                return
-
-            # Remove local upload file if present
-            if job.upload_path:
-                import os
-                try:
-                    if os.path.exists(job.upload_path):
-                        os.remove(job.upload_path)
-                except Exception:
-                    pass
-                job.upload_path = None
-
-            # Remove legacy Redis blob if present
-            if self.queue.redis_client:
-                try:
-                    self.queue.redis_client.delete(f"file:{job_id}")
-                except Exception:
-                    pass
-
-            self.db_session.commit()
-        except Exception:
-            try:
-                self.db_session.rollback()
-            except Exception:
-                pass
-    
     def process_queue(self, max_jobs: Optional[int] = None):
         """
         Process all jobs in queue (for batch processing).

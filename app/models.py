@@ -219,9 +219,6 @@ class Job(Base):
     r2_url = Column(String(512), nullable=True)
     r2_object_key = Column(String(255), nullable=True, unique=True)
 
-    # Temp upload path (local disk, removed after processing)
-    upload_path = Column(String(512), nullable=True)
-
     # Presigned upload (source object in the uploads bucket, deleted after a terminal outcome)
     source_object_key = Column(String(255), nullable=True, unique=True)
     declared_size_bytes = Column(BigInteger, nullable=True)

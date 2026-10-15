@@ -1,7 +1,7 @@
 # Contract: presigned uploads API (for T-006c)
 
 Status: implemented in T-006b (backend). Source: `app/routes/uploads.py`, `app/services/uploads.py`.
-`POST /api/v1/optimize` still exists until T-006b2 removes it; new clients use only this flow.
+This is the only upload path; the legacy multipart upload endpoint (local disk) was removed in T-006b2.
 
 ## Flow
 1. `POST /api/v1/uploads/presign` with the file list -> one job, object key and presigned PUT URL per file.
@@ -36,7 +36,7 @@ Timestamps are UTC without offset. `upload_url` is valid for 15 min (`expires_at
 `complete_by` (30 min after presign).
 
 Errors (`ErrorResponse`: `{"success": false, "error", "message", "details"}`). They are checked before any job, credit
-or object is written; identity resolution may still create the session's quota row (as `/optimize` did):
+or object is written; identity resolution may still create the session's quota row:
 
 | Status | error | When |
 |---|---|---|

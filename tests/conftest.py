@@ -146,10 +146,6 @@ def test_env(tmp_path_factory):
     os.environ["CORS_ALLOW_ORIGINS"] = "http://localhost"
     os.environ["CORS_ALLOW_CREDENTIALS"] = "False"
 
-    # Store uploads under the temp dir so tests don't pollute the repo.
-    upload_dir = tmp_dir / "uploads"
-    os.environ["UPLOAD_DIR"] = str(upload_dir)
-
     # Webhook secret for signature verification tests
     os.environ["LEMONSQUEEZY_SECRET"] = "test-lemonsqueezy-secret"
     # Disable outbound LemonSqueezy API calls during tests (avoid reading .env values).
@@ -176,7 +172,7 @@ def test_env(tmp_path_factory):
         cfg.attributes["url"] = database_url  # don't rely on settings import order
         command.upgrade(cfg, "head")
 
-    yield {"tmp_dir": tmp_dir, "db_path": db_path, "upload_dir": upload_dir}
+    yield {"tmp_dir": tmp_dir, "db_path": db_path}
 
     if pg_db_name:
         try:

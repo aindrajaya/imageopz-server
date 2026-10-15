@@ -1,6 +1,6 @@
 # Registers
 
-Updated 2026-10-15 by Claude Code (task T-006b).
+Updated 2026-10-15 by Claude Code (task T-006b2).
 
 ## Incidents
 - 2026-10-15 - Malicious commits were pushed with the owner's credentials from an infected machine (blameless record).
@@ -30,9 +30,8 @@ Updated 2026-10-15 by Claude Code (task T-006b).
 |---|---|---|
 | SQLite legacy DDL path in `init_db` | `app/models.py` (`TODO(debt)`) | Remove once Postgres is the default for local dev. |
 | `datetime.utcnow` (naive timestamps, deprecated) | `app/models.py`, `app/routes/*`, workers | Clean up in a dedicated task. |
-| Local-disk upload coupling (API and worker share `UPLOAD_DIR`) | `/optimize`, `jobs.upload_path`, worker `upload_path` and Redis `file:{id}` branches | Resolved for the new flow by T-006b (presigned uploads, worker reads the uploads bucket); the old path is removed in T-006b2. |
 | Legacy `auth_token` (custom Pro JWT) accepted in the presign body | `app/routes/uploads.py`, `app/services/quota_context.py` | Kept so auth behavior is unchanged; remove with the JWT path. |
-| SQLite dev DBs built by `create_all` miss columns added later | `app/models.py` legacy path | Existing `imageopz.db` files need recreating or `alembic upgrade head` after 0004. |
+| SQLite dev DBs built by `create_all` miss columns added later | `app/models.py` legacy path | Existing `imageopz.db` files need recreating or `alembic upgrade head` after 0004/0005. |
 
 ## Risks
 | Id | Risk | Fix |
@@ -51,13 +50,13 @@ Updated 2026-10-15 by Claude Code (task T-006b).
 | U4 | Pillow's own limit (89.5 MP warning, 179 MP error) is below MAX_IMAGE_PIXELS (250 MP), so the effective limit is ~179 MP at `/complete` and in the worker (pre-existing). Decide and set `Image.MAX_IMAGE_PIXELS` deliberately. | backlog |
 | U5 | `/complete` reads 64 KiB (D3): a JPEG with >64 KiB of metadata before the frame header (e.g. a 200 KB ICC profile) is rejected `invalid_image`. Option: second ranged read up to 1 MiB. | T-006c feedback |
 | U6 | DONE 2026-10-15: uploads token limited to `imageopz-uploads` (ListBuckets and outputs bucket 403; own bucket works), T-006b step 7. | - |
-| U7 | T-006b2: remove `/optimize`, local-disk code, `UPLOAD_DIR`, Alembic 0005 drops `jobs.upload_path`, regenerate OpenAPI, update `runbooks/local-run.md`. | next |
+| U7 | DONE 2026-10-15: legacy multipart endpoint and local-disk upload code removed, Alembic 0005, OpenAPI regenerated (T-006b2). | - |
 | U8 | A job can stay PENDING, never queued, credit spent: process dies between the `/complete` commit and enqueue, or the revert commit fails. Sweeper (or `/complete`) should re-enqueue or fail PENDING upload jobs older than N minutes. Cloud Tasks (T-007) changes the enqueue step. | T-007 |
 | U9 | Concurrent `/complete` calls: B can answer "pending" for a job that A then reverts to UPLOADING after an enqueue failure; a client trusting B never retries (job expires, credit refunded, not processed). Same fix as U8. | T-007 |
 | U10 | `/complete` ownership uses `jobs.user_quota_id == current quota`; with several quota rows per user (rehydration) an authenticated user can get 404 on their own jobs. `/status` matches on `user_id`; align for authenticated callers. | T-006c feedback |
 | U11 | Worker `processing_error` strings reach clients via `/status` (e.g. "uploads bucket credentials not configured"); return generic messages, log details. | backlog |
-| U12 | Legacy `/optimize` writes credit counters read-then-write and can overwrite a presign reservation; removed with T-006b2. | T-006b2 |
-| U14 | Worker marks a job DONE without uploading the result when outputs storage is not configured (`app/workers/job_worker.py`, `if r2_storage:`); it should fail the job (pre-existing). | T-006b2 |
+| U12 | CLOSED 2026-10-15: the legacy multipart endpoint (read-then-write credit counters) was removed in T-006b2. | - |
+| U14 | CLOSED 2026-10-15 (T-006b2): without outputs storage the worker marks the job FAILED, never DONE; `test_worker_fails_job_when_outputs_store_is_not_configured`. | - |
 | U15 | The outputs token (R2_ACCESS_KEY_ID) is account-wide: ListBuckets 200 and it can write `imageopz-uploads`. Replace it with a token scoped to `imageopz` only, revoke the old one, re-run the scope check. | before T-008 |
 | U13 | A Pro renewal resets `pro_credits_used`; a reservation made before and released after decrements credits spent after the renewal (floor at 0 only). Decide with S6. | payments follow-up |
 
@@ -69,6 +68,7 @@ Updated 2026-10-15 by Claude Code (task T-006b).
 | RLS deny-all on all app tables and `alembic_version` | `tests/test_rls_deny_all.py` (Postgres leg of CI) |
 | `jobs.status` stored as member name (`PENDING`, ...) | `tests/test_job_status_storage.py`, `tests/test_uploads_presign.py` (UPLOADING, REJECTED) |
 | Upload credits reserved atomically and released exactly once (reject, sweeper, repeats) | `tests/test_uploads_*.py`, `tests/test_upload_worker_and_sweeper.py`, `tests/test_uploads_concurrency.py` (Postgres) |
+| Worker never marks a job DONE without an uploaded result (U14) | `tests/test_upload_worker_and_sweeper.py` |
 | Tests never load `.env` or reach external hosts | `tests/conftest.py` guard, `tests/test_network_guard.py` |
 
 ## T-008 checklist

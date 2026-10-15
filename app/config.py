@@ -112,9 +112,6 @@ class Settings(BaseSettings):
     cleanup_cron_schedule: str = "0 * * * *"  # Hourly at minute 0
     timezone: str = "Asia/Jakarta"
 
-    # Upload temp storage
-    upload_dir: str = "./tmp/uploads"
-
     # Background worker
     worker_enabled: bool = True
     worker_poll_timeout_seconds: int = 5
