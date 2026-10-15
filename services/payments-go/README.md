@@ -1,8 +1,8 @@
 # payments-go - LemonSqueezy webhook ingress
 
 Verifies the `X-Signature` HMAC, dedupes in Postgres (`payments.webhook_deliveries`), and enqueues the original
-payload for the Python API (`POST /internal/payments/events`, contract in `docs/engineering/tasks/T-004-payments-activation.md`).
-Python stays the only writer of users, users_quota and orders (ADR-001). Schema is owned by Alembic revision 0003;
+payload for the Python API (`POST /internal/payments/events`, contract in [T-004](../../docs/engineering/tasks/T-004-payments-activation.md)).
+Python stays the only writer of users, users_quota and orders ([ADR-001](../../docs/engineering/adr/ADR-001-payments-go-ingress.md), [ADR-004](../../docs/engineering/adr/ADR-004-payment-event-idempotency.md)). Schema is owned by Alembic revision 0003 ([migration](../../alembic/versions/0003_payments_webhook_deliveries.py));
 this service never creates or alters schema and refuses to start if the table is missing.
 
 ```mermaid
