@@ -21,3 +21,6 @@ Scale-to-zero cost; cold starts acceptable; lost Nginx rate limits until Cloud A
 First paying client; Supabase pause or >400 MB; worker CPU cost; need for Cloud Armor.
 ## Validation
 T-006..T-008 acceptance criteria; billing report after first month.
+
+## Amendment 2026-10-15 - Region
+Cloud Run services, Cloud Run Jobs and the Cloud Tasks queue run in asia-northeast1 (Tokyo). Reason: co-location with the Supabase project in ap-northeast-1 (Tokyo) keeps database round trips short, and asia-northeast1 is a Tier 1 Cloud Run pricing region. Region of the Supabase project is REPORTED (owner), not verifiable from the repo.

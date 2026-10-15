@@ -32,3 +32,11 @@ Updated 2026-10-15 by Claude Code (task T-DOCS-1).
 | Successful public webhook response includes `access_token` | `tests/test_webhook_characterization.py`, `tests/test_webhook.py` |
 | RLS deny-all on all app tables and `alembic_version` | `tests/test_rls_deny_all.py` (Postgres leg of CI) |
 | `jobs.status` stored as member name (`PENDING`, ...) | `tests/test_job_status_storage.py` |
+
+## T-008 checklist
+- Region: asia-northeast1 for Cloud Run services, Cloud Run Jobs and the Cloud Tasks queue (ADR-002 amendment).
+- Run `alembic upgrade head` as a Cloud Run Job through the Supabase session pooler (5432), as the table-owner role.
+- Owner verifies in the Supabase dashboard that the Data API does not expose the `payments` schema (only `public` should be exposed).
+- G1: size the Go pool (8) x Cloud Run instances against the Supabase pooler limit; set `--concurrency` and `--max-instances`.
+- S4: cache Google OIDC certs in `app/utils/internal_auth.py`.
+- Ingress and API OIDC settings (audience, allowed emails), queue and service accounts, Secret Manager, LemonSqueezy webhook URL switch (see tasks/T-005-payments-go-ingress.md).
