@@ -1,6 +1,14 @@
 # Registers
 
-Updated 2026-10-15 by Claude Code (task T-DOCS-1).
+Updated 2026-10-15 by Claude Code (task T-DOCS-SEC).
+
+## Incidents
+- 2026-10-15 - Malicious commits were pushed with the owner's credentials from an infected machine (blameless record).
+- Server: a VS Code auto-run task, removed by a history rewrite on 2026-10-14. UI: a build-time remote-code loader, removed in fd1032e (imageopz-ui PR #1).
+- Response: credentials and secrets rotated, old SSH keys revoked, affected deployments deleted and rebuilt, GitHub Support purge requested,
+  secret scanning and push protection enabled, rulesets on both repos.
+- Verification: T-SEC-2/2b and gitleaks (history and tree) clean, except one triaged malware indicator in UI history.
+- Lesson: treat any build or dev command as code execution (rule in AGENTS.md).
 
 ## Lessons
 | Date | Lesson | Rule |

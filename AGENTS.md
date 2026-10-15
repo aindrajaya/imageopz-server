@@ -39,12 +39,14 @@ Shared agent memory (CLAUDE.md is a symlink to this file). Every rule carries a 
 - Stay inside the task's scope and authorization; the owner commits and pushes; no git stash/reset/clean or history rewrite - keeps the owner's work safe
 - Never read or print .env files, local DB files or secrets; never put secrets in code, logs or docs - they leak through history
 - New dependencies need a stated reason and an exact pin - reproducible builds
+- Never run install, dev, build or test commands on commits or branches you have not inspected; never on UI commits before fd1032e - build tooling executes repository code
 - Plain hyphens, no em-dashes; no AI co-author trailers; never hand-edit generated files (Alembic revisions after review) - owner convention
 
 ## Learned (date - rule - why)
 - 2026-10-15 - STATE.md is a snapshot: overwrite it each task; append only to task files - keeps STATE short and current
 - 2026-10-15 - Squash merges: reference the squash SHA and PR number, not branch commits - branch SHAs vanish from main
 - 2026-10-15 - Merge only after the PR's own checks pass (`gh pr checks <n> --watch && gh pr merge`) - `gh run watch` can select another branch's run.
+- 2026-10-15 - Verify ruleset/required-check names against real check-run names - a placeholder blocks every PR.
 
 ## Runbooks (docs/engineering/runbooks/)
 - local-run.md - start the API and worker locally, regenerate the OpenAPI spec
