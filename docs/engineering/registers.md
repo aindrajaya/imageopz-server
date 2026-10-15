@@ -23,6 +23,7 @@ Updated 2026-10-15 by Claude Code (task T-006b).
 | Date | Lesson | Rule |
 |---|---|---|
 | 2026-10-14 | VPS destroyed before a verified backup; the prod DB and `.env` were later recovered by the owner. | Before decommissioning a host, back up and verify a restore. Secrets live in Secret Manager, not host files. |
+| 2026-10-15 | fe7f405 carries an AI co-author trailer contrary to AGENTS.md; left in place (main history is protected). | Co-author attribution disabled in Claude Code settings. |
 
 ## Debt
 | Item | Where | Note |

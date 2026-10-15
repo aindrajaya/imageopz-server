@@ -1,15 +1,15 @@
 # T-006b - Presigned direct-to-R2 uploads (backend), phase 1: spike + expand
 Branch feat/presigned-uploads from main@6f757a4. Rigor: Elevated (security, credits). Executor: Claude Code.
-Scope after owner amendment 2: phase 1 only; phase 2 (contract) is T-006b2. Two local commits, not pushed.
+Scope after owner amendment 2: phase 1 only; phase 2 (contract) is T-006b2. Merged as PR #14 (rebase merge); main SHAs below.
 
 ## Handoff
-**Baseline -> final:** 6f757a4 -> d4cd1f8 (commit 1, refactor) -> commit 2 (feature; the commit that adds this file).
+**Baseline -> final:** 6f757a4 -> 7810ada (commit 1, refactor) -> fc89b1b (commit 2, feature; adds this file) -> ad32c65 (docs) -> fe7f405 (test fix).
 Python 3.11.17 (`~/.venvs/imageopz`); PostgreSQL 16.15 (Homebrew, throwaway cluster on 5433, deleted at the end).
 
 | Step | SQLite | Postgres 16.15 |
 |---|---|---|
 | Baseline 6f757a4 (matches STATE) | 69 passed, 5 skipped | 74 passed |
-| Commit 1 d4cd1f8 (index exported, run outside the repo, no .env) | 69 passed, 5 skipped | 74 passed |
+| Commit 1 7810ada (index exported, run outside the repo, no .env) | 69 passed, 5 skipped | 74 passed |
 | Commit 2 (final tree, network guard on) | 110 passed, 9 skipped | 119 passed |
 
 | Criterion | Evidence (final revision) |
@@ -175,7 +175,7 @@ Verified OK:
 - If presigning fails, all jobs are rejected and the credits released.
 - Storage errors leave jobs UPLOADING, so the sweeper eventually settles them.
 - Object keys are `uploads/<uuid>` with no client input. The filename is DB-only.
-- The d4cd1f8 extraction is a verbatim move.
+- The 7810ada extraction is a verbatim move.
 - The Alembic CHECK name `jobstatus` matches the model's `conv("jobstatus")`, and the length is 10.
 
 #### Verdicts
@@ -210,3 +210,11 @@ Verified OK:
 git push -u origin feat/presigned-uploads
 gh pr create --fill --base main
 gh pr checks <n> --watch && gh pr merge <n> --squash --delete-branch
+
+## Merge (2026-10-15)
+- PR #14, rebase merge. main: 7810ada (refactor), fc89b1b (feature), ad32c65 (docs), fe7f405 (test fix).
+- fe7f405: CI flake in `test_partial_enqueue_failure_reverts_only_failed_jobs`; it asserted enqueue order, but /complete
+  enqueues in job-id order (NIT-1) and ids are random UUIDs. Now asserts per-job counts and that the retry enqueued only
+  the failed job; no product code changed. No other new test depends on job-id order. Evidence: the test 30x on SQLite and
+  10x on Postgres 16.15 without a failure; full suite SQLite 110 passed, 9 skipped; Postgres 119 passed.
+- fe7f405 carries an AI co-author trailer contrary to AGENTS.md; left in place (registers.md "Lessons").
