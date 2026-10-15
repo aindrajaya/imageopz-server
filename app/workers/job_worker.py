@@ -5,15 +5,21 @@ Uses Redis as message broker for job processing.
 
 import json
 import logging
+import os
 import redis
+import tempfile
 import time
 from typing import Optional, List
 from datetime import datetime, timedelta
 from uuid import uuid4
 
+from sqlalchemy import update
+
 from app.config import settings
 from app.models import Job, JobStatus, UsersQuota
 from app.services.image_service import ImageOptimizer, r2_storage
+from app.services.upload_store import UploadStore, get_upload_store
+from app.services.uploads import delete_source_best_effort
 from app.utils.security import SecurityValidator
 
 
@@ -162,12 +168,22 @@ class JobQueue:
 class JobWorker:
     """Processes image optimization jobs from queue"""
     
-    def __init__(self, db_session, queue: Optional[JobQueue] = None):
+    def __init__(self, db_session, queue: Optional[JobQueue] = None, store: Optional[UploadStore] = None):
         self.db_session = db_session
         self.queue = queue or JobQueue()
         self.optimizer = ImageOptimizer()
-    
+        self.store = store
+        self._source_tmp_path: Optional[str] = None
+
     def process_job(self, job_id: str) -> bool:
+        """Process a job; afterwards drop the temp copy and, on DONE/FAILED, the source object in the uploads bucket."""
+        self._source_tmp_path = None
+        try:
+            return self._process_job(job_id)
+        finally:
+            self._release_source(job_id)
+
+    def _process_job(self, job_id: str) -> bool:
         """
         Process a single job: optimize image and upload to R2.
         
@@ -207,18 +223,37 @@ class JobWorker:
 
             t0 = time.perf_counter()
             started_at = datetime.utcnow()
-            
-            # Update status to processing
-            job.status = JobStatus.PROCESSING
-            job.processing_started_at = started_at
+
+            # Claim PENDING -> PROCESSING conditionally: a duplicate delivery, or a job still UPLOADING/REJECTED,
+            # must not be processed (or overwrite a finished result).
+            claimed = self.db_session.execute(
+                update(Job)
+                .where(Job.id == job_id, Job.status == JobStatus.PENDING)
+                .values(status=JobStatus.PROCESSING, processing_started_at=started_at)
+                .execution_options(synchronize_session=False)
+            ).rowcount == 1
             self.db_session.commit()
+            self.db_session.refresh(job)
+            if not claimed:
+                logger.warning("Job %s is %s, not PENDING; not processing", job_id, job.status.name)
+                return False
             self.queue.set_job_progress(job_id, 10, "Processing started")
             
             self.queue.set_job_progress(job_id, 25, "Stripping metadata")
             
             # Strip EXIF and metadata
             try:
-                if job.upload_path:
+                if job.source_object_key:
+                    # Final guard (D3): the bytes may have been replaced after /complete via the still-valid URL.
+                    source_path = self._download_source(job)
+                    formats = SecurityValidator.pil_formats(job.declared_content_type)
+                    with open(source_path, "rb") as fh:
+                        valid, magic_mime = SecurityValidator.validate_magic_number(fh.read(64 * 1024))
+                    if not formats or not valid or magic_mime != job.declared_content_type:
+                        raise Exception("Source content does not match the declared image type")
+                    SecurityValidator.validate_decompression_bomb_protection_path(source_path, formats)
+                    file_data, width, height = SecurityValidator.strip_exif_and_metadata_path_with_dimensions(source_path, formats)
+                elif job.upload_path:
                     file_data, width, height = SecurityValidator.strip_exif_and_metadata_path_with_dimensions(job.upload_path)
                 else:
                     raw = self._get_file_data(job_id)
@@ -301,6 +336,40 @@ class JobWorker:
                 pass
             return False
     
+    def _download_source(self, job: Job) -> str:
+        """Stream the uploads-bucket object to a temp file; refuses more bytes than were declared at presign."""
+        store = self.store or get_upload_store()
+        fd, path = tempfile.mkstemp(prefix=f"imageopz-{job.id}-", suffix=".upload")
+        self._source_tmp_path = path
+        written = 0
+        with os.fdopen(fd, "wb") as out:
+            for chunk in store.get_stream(job.source_object_key):
+                written += len(chunk)
+                if job.declared_size_bytes is not None and written > job.declared_size_bytes:
+                    raise Exception("Source object is larger than the declared size")
+                out.write(chunk)
+        return path
+
+    def _release_source(self, job_id: str) -> None:
+        if self._source_tmp_path:
+            try:
+                os.remove(self._source_tmp_path)
+            except OSError:
+                pass
+            self._source_tmp_path = None
+        try:
+            job = self.db_session.query(Job).filter_by(id=job_id).first()
+        except Exception:
+            self.db_session.rollback()
+            return
+        if job and job.source_object_key and job.status in (JobStatus.DONE, JobStatus.FAILED):
+            try:
+                store = self.store or get_upload_store()
+            except Exception:
+                logger.warning("Uploads bucket not configured; leaving %s to the lifecycle rule", job.source_object_key)
+                return
+            delete_source_best_effort(store, job.source_object_key)
+
     def _get_file_data(self, job_id: str) -> Optional[bytes]:
         """
         Retrieve original file data for job.

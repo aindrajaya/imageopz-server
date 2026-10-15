@@ -12,7 +12,8 @@ Shared agent memory (CLAUDE.md is a symlink to this file). Every rule carries a 
 - Target hosting Cloud Run (ADR-002); Go payments ingress planned (ADR-001); currently offline
 
 ## Layout
-- app/routes/: optimization.py (optimize, status, checkout, LemonSqueezy webhook; large), session.py, health.py
+- app/routes/: optimization.py (optimize, status, checkout, LemonSqueezy webhook; large), uploads.py (presign, complete), session.py, health.py
+- Uploads: browser PUTs to R2 via presigned URLs; contract docs/engineering/contracts/uploads-api.md; sweeper python -m app.cli.sweep_uploads
 - app/models.py, app/config.py (env-driven settings and tier limits), app/utils/ (security, auth_deps, supabase_auth)
 - app/workers/ + run_worker.py: Redis queue worker and cleanup scheduler, a separate process (Cloud Tasks replaces it)
 - app/services/: image_service.py (Pillow/AVIF, R2), email_service.py; alembic/; tests/; issues/ (incident notes)
@@ -32,6 +33,7 @@ Shared agent memory (CLAUDE.md is a symlink to this file). Every rule carries a 
 - Python is the only writer of users, users_quota, orders; activation is idempotent per order - avoids drift and double grants (ADR-001)
 - Commit the Job row before enqueueing; the worker retries lookups - Redis can deliver before the DB commit is visible (issues/RACE_CONDITION_FIX.md)
 - Tests reload app.config, app.models, app.main per test; follow tests/conftest.py - settings and db are module singletons
+- Tests never load .env or reach external hosts; the conftest guard enforces it - a collection-time import once sent live API calls (T-006b)
 - Never edit existing test assertions to make a change pass; behavior changes update tests deliberately and say so - tests are the contract
 - Reproduce a bug with a failing test at the closest realistic level before fixing it - proves the fix
 - Choose designs on simplicity, robustness and maintainability; ignore implementation time, weigh operating cost and solo-maintainer burden

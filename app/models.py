@@ -3,7 +3,7 @@ SQLAlchemy database models for ImageOpz.
 SQLite (WAL) for quick local runs; Postgres schema is owned by Alembic (see alembic/).
 """
 
-from sqlalchemy import MetaData, Column, String, Integer, Boolean, DateTime, Float, Text, Enum, Index, create_engine, false, ForeignKey, UniqueConstraint
+from sqlalchemy import MetaData, Column, String, Integer, BigInteger, Boolean, DateTime, Float, Text, Enum, Index, create_engine, false, ForeignKey, UniqueConstraint
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.sql.elements import conv
 from sqlalchemy.orm import sessionmaker
@@ -31,10 +31,18 @@ Base = declarative_base(metadata=MetaData(naming_convention=NAMING_CONVENTION))
 
 class JobStatus(str, enum.Enum):
     """Job processing status enum"""
+    UPLOADING = "uploading"  # presigned, waiting for the browser's PUT and /uploads/complete
     PENDING = "pending"
     PROCESSING = "processing"
     DONE = "done"
     FAILED = "failed"
+    REJECTED = "rejected"  # upload refused at /uploads/complete or expired; credit released
+
+
+class CreditPool(str, enum.Enum):
+    """Which counter a job's credit was reserved from (released from the same one)."""
+    FREE = "free"  # users_quota.credits_used
+    PRO = "pro"  # users_quota.pro_credits_used
 
 
 class OrderProvider(str, enum.Enum):
@@ -213,6 +221,14 @@ class Job(Base):
 
     # Temp upload path (local disk, removed after processing)
     upload_path = Column(String(512), nullable=True)
+
+    # Presigned upload (source object in the uploads bucket, deleted after a terminal outcome)
+    source_object_key = Column(String(255), nullable=True, unique=True)
+    declared_size_bytes = Column(BigInteger, nullable=True)
+    declared_content_type = Column(String(50), nullable=True)
+    upload_expires_at = Column(DateTime, nullable=True, index=True)
+    rejection_reason = Column(String(32), nullable=True)
+    credit_pool = Column(String(8), nullable=True)  # CreditPool value
     
     # Processing info
     quality_setting = Column(Integer)  # 50 for free, 75 for pro

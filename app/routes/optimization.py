@@ -586,6 +586,7 @@ async def get_job_status(
             compression_ratio=job.compression_ratio,
             r2_url=job.r2_url,
             error_message=job.processing_error,
+            rejection_reason=getattr(job, "rejection_reason", None),
             created_at=job.created_at,
             expiry_date=job.expiry_date,
             processing_started_at=getattr(job, "processing_started_at", None),

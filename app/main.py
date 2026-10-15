@@ -13,7 +13,8 @@ import logging
 
 from app.config import settings
 from app.models import db
-from app.routes import optimization, health, session, internal
+from app.routes import optimization, health, session, internal, uploads
+from app.services.upload_store import uploads_configured
 
 # Configure logging
 logging.basicConfig(
@@ -35,6 +36,9 @@ async def lifespan(app: FastAPI):
     # Initialize database
     db.init_db()
     logger.info("Database initialized")
+
+    if not uploads_configured():
+        logger.warning("R2 uploads bucket not configured (R2_UPLOADS_*); /api/v1/uploads/* will return 503")
 
     # Log key routes (helps diagnose mismatched deployments / stale reloads)
     try:
@@ -94,6 +98,8 @@ def create_app() -> FastAPI:
             "/api/v1/session/reconcile",
             "/api/v1/checkout/lemonsqueezy",
             "/api/v1/optimize",
+            "/api/v1/uploads/presign",
+            "/api/v1/uploads/complete",
         }
         should_log = request.url.path in key_paths
         if should_log:
@@ -134,6 +140,7 @@ def create_app() -> FastAPI:
     # Include routes
     app.include_router(health.router)
     app.include_router(optimization.router)
+    app.include_router(uploads.router)
     app.include_router(session.router)
     app.include_router(internal.router)
     
