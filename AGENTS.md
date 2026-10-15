@@ -49,6 +49,7 @@ Shared agent memory (CLAUDE.md is a symlink to this file). Every rule carries a 
 - 2026-10-15 - Squash merges: reference the squash SHA and PR number, not branch commits - branch SHAs vanish from main
 - 2026-10-15 - Merge only after the PR's own checks pass (`gh pr checks <n> --watch && gh pr merge`) - `gh run watch` can select another branch's run.
 - 2026-10-15 - Verify ruleset/required-check names against real check-run names - a placeholder blocks every PR.
+- 2026-10-15 - Never assert the order of items processed in sorted-id order; UUIDs are random, so the test is flaky in CI.
 
 ## Runbooks (docs/engineering/runbooks/)
 - local-run.md - start the API and worker locally, regenerate the OpenAPI spec

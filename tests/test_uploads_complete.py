@@ -201,12 +201,15 @@ def test_partial_enqueue_failure_reverts_only_failed_jobs(client, fake_store, mo
     ]
     assert (_job(first).status.name, _job(second).status.name) == ("PENDING", "UPLOADING")
     assert _credits(sid) == 2
+    attempted = len(calls)
 
     monkeypatch.setattr(job_queue, "enqueue_job", lambda job_id: calls.append(job_id) or True)
     retry = _complete(client, sid, [first, second])
     assert retry.status_code == 200, retry.text
     assert [j["status"] for j in retry.json()["jobs"]] == ["pending", "pending"]
-    assert calls == [first, second, second]  # the already-queued job is not enqueued again
+    # Jobs are enqueued in job-id order and ids are random UUIDs, so only counts are stable.
+    assert (calls.count(first), calls.count(second)) == (1, 2)
+    assert calls[attempted:] == [second]  # the already-queued job is not enqueued again
 
 
 def test_complete_returns_503_when_queue_unavailable(client, fake_store):
