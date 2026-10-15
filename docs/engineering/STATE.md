@@ -1,6 +1,6 @@
 ---
 project: imageopz-server
-updated: 2026-10-15 by Claude Code (task T-006b)
+updated: 2026-10-15 by Claude Code (T-006b merge record)
 ---
 
 # STATE - ImageOpz
@@ -10,12 +10,11 @@ Migrate ImageOpz to GCP Cloud Run + Supabase Postgres, with a Go payments ingres
 before applying to Sticker Mule on Mon 19 Oct 2026.
 
 ## Accepted baseline
-- `main` @ `6f757a4` (PR #13). CI checks: `pytest (sqlite)`, `pytest (postgres)`; payments-go workflow is path-filtered.
-- Branch `feat/presigned-uploads` (T-006b, two local commits, not pushed): SQLite 106 passed/7 skipped; Postgres 16.15 (Homebrew) 113 passed; `alembic heads` = 0004.
+- `main` @ `fe7f405` (PR #14). SQLite 110 passed/9 skipped; Postgres 16.15 (Homebrew) 119 passed; `alembic heads` = 0004. CI checks: `pytest (sqlite)`, `pytest (postgres)`; payments-go workflow is path-filtered.
 - Deployed: none; ImageOpz offline. The migrations have never run against Supabase.
 - Env: Python 3.11 venv `~/.venvs/imageopz` (rebuilt by the owner, libmagic installed); no Docker; throwaway Postgres from Postgres.app or Homebrew (runbooks/local-postgres.md).
 
-## Done (PR, squash SHA)
+## Done (PR, main SHA)
 | Task | PR | SHA |
 |---|---|---|
 | T-000..T-003 and docs | #1-#6 | f5c1266, f87894e, fee9269, ddb07e6, d249de6, da5ffac |
@@ -28,7 +27,7 @@ before applying to Sticker Mule on Mon 19 Oct 2026.
 | T-SEC-3 worm artifacts removed: imageopz-server .gitignore; imageopz-ui remote-code loader, tracked .env and decoy assets | imageopz-server #12, imageopz-ui #1 | ac7c763, fd1032e |
 | T-006a recon of both repos for presigned uploads (report, no PR) | - | - |
 | Security incident recorded (registers.md "Incidents") and guardrail rule (AGENTS.md) | #13 | 6f757a4 |
-| T-006b presigned uploads backend, phase 1 (spike, expand) | not pushed | local: see tasks/T-006b-presigned-uploads.md |
+| T-006b presigned uploads backend, phase 1 (spike, expand), rebase merge | #14 | 7810ada, fc89b1b, ad32c65, fe7f405 |
 
 ## Repo settings (verified 2026-10-15 via gh)
 - Both repos PUBLIC; secret scanning and push protection enabled on both.
@@ -48,7 +47,6 @@ users/users_quota/orders. Squash merges. Uploads use their own R2 token (no fall
 ## Open tasks
 | Task | Scope | Status |
 |---|---|---|
-| T-006b | Presigned uploads backend, phase 1 | done locally; owner pushes and opens the PR |
 | T-006b2 | Remove `/optimize`, local-disk upload code and `UPLOAD_DIR`, Alembic 0005 drop `jobs.upload_path`, regenerate OpenAPI, update runbooks/local-run.md | next |
 | T-006c | Frontend upload change in imageopz-ui (contract: contracts/uploads-api.md) | open (uploads token scoped, U6 done) |
 | T-DOCS-UI | Docs for imageopz-ui (other repo) | open |
@@ -70,4 +68,4 @@ users/users_quota/orders. Squash merges. Uploads use their own R2 token (no fall
 None. Each task grants its own; the owner commits and pushes.
 
 ## Next bounded step
-Owner pushes feat/presigned-uploads and merges after checks; then T-006b2.
+T-006b2.
