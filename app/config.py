@@ -3,6 +3,8 @@ Configuration management for ImageOpz backend service.
 Loads settings from environment variables with sensible defaults.
 """
 
+import os
+
 from pydantic_settings import BaseSettings
 from typing import Optional, Literal
 from pydantic import field_validator, model_validator
@@ -43,6 +45,15 @@ class Settings(BaseSettings):
     r2_secret_access_key: Optional[str] = None
     r2_bucket_name: str = "imageopz"
     r2_custom_domain: str = "https://your-domain.r2.dev"
+
+    # Cloudflare R2 uploads bucket (browser -> R2 via presigned PUT; S3 endpoint only). Its own scoped token:
+    # without R2_UPLOADS_* the upload endpoints return 503; the outputs-bucket credentials are never used.
+    r2_uploads_bucket: str = "imageopz-uploads"
+    r2_uploads_access_key_id: Optional[str] = None
+    r2_uploads_secret_access_key: Optional[str] = None
+    upload_url_ttl_seconds: int = 900
+    upload_complete_window_seconds: int = 1800
+    upload_key_prefix: str = "uploads/"
 
     # LemonSqueezy
     lemonsqueezy_secret: Optional[str] = None
@@ -116,7 +127,8 @@ class Settings(BaseSettings):
     environment: Literal["development", "staging", "production"] = "development"
 
     class Config:
-        env_file = ".env"
+        # IMAGEOPZ_ENV_FILE="" disables .env loading (tests/conftest.py); environment variables still apply.
+        env_file = os.environ.get("IMAGEOPZ_ENV_FILE", ".env") or None
         case_sensitive = False
         extra = "ignore"
 

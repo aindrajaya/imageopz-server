@@ -10,10 +10,12 @@ from enum import Enum
 
 
 class JobStatusEnum(str, Enum):
+    UPLOADING = "uploading"
     PENDING = "pending"
     PROCESSING = "processing"
     DONE = "done"
     FAILED = "failed"
+    REJECTED = "rejected"
 
 
 # ============= Request Schemas =============
@@ -104,6 +106,7 @@ class JobStatusResponse(BaseModel):
     
     # Error handling
     error_message: Optional[str] = Field(None, description="Error details if status is 'failed'")
+    rejection_reason: Optional[str] = Field(None, description="Why the upload was refused if status is 'rejected'")
     
     # Metadata
     created_at: datetime = Field(..., description="Job creation timestamp")
@@ -153,6 +156,47 @@ class ErrorResponse(BaseModel):
                 }
             }
         }
+
+
+# ============= Presigned Upload Schemas =============
+
+class PresignFile(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255, description="Original filename (stored in the DB only)")
+    size: int = Field(..., gt=0, description="Exact file size in bytes")
+    content_type: str = Field(..., max_length=50, description="image/jpeg, image/png or image/webp")
+
+
+class PresignRequest(BaseModel):
+    files: List[PresignFile] = Field(..., min_length=1, description="Files to upload")
+    auth_token: Optional[str] = Field(None, description="LEGACY Pro JWT from the webhook response (optional)")
+
+
+class PresignedUpload(BaseModel):
+    job_id: str
+    object_key: str
+    upload_url: str = Field(..., description="Presigned PUT URL (R2 S3 endpoint)")
+    method: str = "PUT"
+    headers: dict = Field(..., description="Headers the PUT must send exactly (Content-Type)")
+    expires_at: datetime = Field(..., description="When upload_url stops working (UTC)")
+
+
+class PresignResponse(BaseModel):
+    files: List[PresignedUpload]
+    complete_by: datetime = Field(..., description="Call /uploads/complete before this (UTC)")
+
+
+class CompleteRequest(BaseModel):
+    job_ids: List[str] = Field(..., min_length=1, max_length=100, description="Jobs from /uploads/presign")
+
+
+class CompletedJob(BaseModel):
+    job_id: str
+    status: JobStatusEnum
+    reason: Optional[str] = Field(None, description="Rejection reason if status is 'rejected'")
+
+
+class CompleteResponse(BaseModel):
+    jobs: List[CompletedJob]
 
 
 # ============= Authentication Schemas =============

@@ -1,6 +1,6 @@
 ---
 project: imageopz-server
-updated: 2026-10-15 by Claude Code (task T-DOCS-SEC)
+updated: 2026-10-15 by Claude Code (task T-006b)
 ---
 
 # STATE - ImageOpz
@@ -10,10 +10,10 @@ Migrate ImageOpz to GCP Cloud Run + Supabase Postgres, with a Go payments ingres
 before applying to Sticker Mule on Mon 19 Oct 2026.
 
 ## Accepted baseline
-- `main` @ `ac7c763` (PR #12). CI checks: `pytest (sqlite)`, `pytest (postgres)`; payments-go workflow is path-filtered.
-- Last recorded local runs (T-005 tree, unchanged tests since): SQLite 69 passed/5 skipped; Postgres 16.1 74 passed; `alembic heads` = 0003; Go `go test -race`, integration and golangci-lint v2.14.0 clean (go1.27.2).
+- `main` @ `6f757a4` (PR #13). CI checks: `pytest (sqlite)`, `pytest (postgres)`; payments-go workflow is path-filtered.
+- Branch `feat/presigned-uploads` (T-006b, two local commits, not pushed): SQLite 106 passed/7 skipped; Postgres 16.15 (Homebrew) 113 passed; `alembic heads` = 0004.
 - Deployed: none; ImageOpz offline. The migrations have never run against Supabase.
-- Env: Python 3.11 venv `~/.venvs/imageopz`; no Docker; Postgres.app only for throwaway clusters (port 5433).
+- Env: Python 3.11 venv `~/.venvs/imageopz` (rebuilt by the owner, libmagic installed); no Docker; throwaway Postgres from Postgres.app or Homebrew (runbooks/local-postgres.md).
 
 ## Done (PR, squash SHA)
 | Task | PR | SHA |
@@ -25,50 +25,49 @@ before applying to Sticker Mule on Mon 19 Oct 2026.
 | Publication, ruleset, region and owner confirmations (docs) | #10 | db2a9bc |
 | T-DOCS-3 portfolio README | #11 | 58de6c1 |
 | T-SEC-2/2b verification scans (read-only, no PR) | - | - |
-| UI remediation: remote-code loader, tracked .env and decoy assets removed | imageopz-ui #1 | fd1032e |
-| T-SEC-3 | not verifiable via gh | - |
-| Remove worm artifacts from .gitignore | #12 | ac7c763 |
+| T-SEC-3 worm artifacts removed: imageopz-server .gitignore; imageopz-ui remote-code loader, tracked .env and decoy assets | imageopz-server #12, imageopz-ui #1 | ac7c763, fd1032e |
 | T-006a recon of both repos for presigned uploads (report, no PR) | - | - |
-| Security incident recorded (registers.md "Incidents") and guardrail rule (AGENTS.md) | this PR | - |
-
-No PR title or body names T-SEC-2/2b/3, so their PR numbers are unverified; owner to fill in if any had a PR.
+| Security incident recorded (registers.md "Incidents") and guardrail rule (AGENTS.md) | #13 | 6f757a4 |
+| T-006b presigned uploads backend, phase 1 (spike, expand) | not pushed | local: see tasks/T-006b-presigned-uploads.md |
 
 ## Repo settings (verified 2026-10-15 via gh)
 - Both repos PUBLIC; secret scanning and push protection enabled on both.
-- `aindrajaya/imageopz-server` ruleset 25125469 on the default branch (active, no bypass): deletion and non_fast_forward blocked; PR required (0 approvals); required checks `pytest (sqlite)` and `pytest (postgres)`. payments-go jobs intentionally not required (path-filtered).
-- `aindrajaya/imageopz-ui` ruleset 25144456 "main protection" (active, no bypass): deletion and non_fast_forward blocked; PR required (0 approvals); required check `check` (matches the real check-run name).
+- `aindrajaya/imageopz-server` ruleset 25125469 on the default branch (active, no bypass): deletion and non_fast_forward blocked; PR required (0 approvals); required checks `pytest (sqlite)` and `pytest (postgres)`.
+- `aindrajaya/imageopz-ui` ruleset 25144456 "main protection" (active, no bypass): deletion and non_fast_forward blocked; PR required (0 approvals); required check `check`.
 
 ## Owner confirmations (REPORTED, not verifiable from the repo)
-- LemonSqueezy checkout is disabled while offline; no live paid orders, so Postgres starts empty and no manual re-grants are needed.
-- Supabase project is in ap-northeast-1 (Tokyo) -> Cloud Run, Cloud Run Jobs and the Cloud Tasks queue in asia-northeast1 (ADR-002 amendment).
-- Incident response steps and gitleaks results in registers.md "Incidents".
+- LemonSqueezy checkout is disabled while offline; no live paid orders, so Postgres starts empty.
+- Supabase project in ap-northeast-1 (Tokyo) -> Cloud Run, Cloud Run Jobs and the Cloud Tasks queue in asia-northeast1 (ADR-002 amendment).
 
 ## Decisions (owner, 2026-10-15)
-ADR-001..004 accepted. Cloud Run only; Supabase Postgres (services via pooler 6543 transaction mode, migrations via 5432 session mode, table-owner role); keep R2;
-Cloud Tasks replaces Redis; presigned uploads. Python is the single writer of users/users_quota/orders; Go dedupes in `payments.webhook_deliveries`. Squash merges.
+ADR-001..004 accepted. Cloud Run only; Supabase Postgres (pooler 6543 for services, 5432 for migrations, table-owner role); keep R2;
+Cloud Tasks replaces Redis; presigned uploads (T-006b D1-D8: Job reused with UPLOADING/REJECTED, credits reserved at presign and
+released once, batch idempotent /complete, URL TTL 15 min, 30 min window, sweeper as CLI). Python is the single writer of
+users/users_quota/orders. Squash merges. Uploads use their own R2 token (no fallback to the outputs token).
 
 ## Open tasks
 | Task | Scope | Status |
 |---|---|---|
-| T-DOCS-UI | Docs for imageopz-ui (other repo) | next |
-| T-006a | Read-only recon of both repos for presigned uploads | done |
-| T-006b | Backend presign endpoint (direct-to-R2) | open |
-| T-006c | Frontend upload change in imageopz-ui | open |
-| T-007 | Cloud Tasks worker, remove Redis (+ update runbooks/local-run.md, drop monitor_memory.py) | open |
+| T-006b | Presigned uploads backend, phase 1 | done locally; owner pushes and opens the PR |
+| T-006b2 | Remove `/optimize`, local-disk upload code and `UPLOAD_DIR`, Alembic 0005 drop `jobs.upload_path`, regenerate OpenAPI, update runbooks/local-run.md | next |
+| T-006c | Frontend upload change in imageopz-ui (contract: contracts/uploads-api.md) | open; needs U6 first |
+| T-DOCS-UI | Docs for imageopz-ui (other repo) | open |
+| T-007 | Cloud Tasks worker, remove Redis, schedule the upload sweeper (+ runbooks/local-run.md, drop monitor_memory.py) | open |
 | T-008 | Containers + Cloud Run deploy; checklist in registers.md | open |
 
 ## Owner items
-- Wipe the Windows machine before any reuse.
-- GitHub Support purge: pending confirmation.
+- Discard up to three LemonSqueezy checkout objects created by T-006b test runs (registers.md "Incidents").
+- Create an R2 token scoped to `imageopz-uploads`, set R2_UPLOADS_*; then run the least-privilege check (U6).
+- Wipe the Windows machine before any reuse. GitHub Support purge: pending confirmation.
 
 ## Top risks / blockers
-- Rate limiting lost without Nginx; X-Forwarded-For trust (`app/utils/security.py:IpFingerprint`); Supabase Free pauses after 1 week inactivity / 500 MB.
+- Rate limiting lost without Nginx (presign now included, U1); X-Forwarded-For trust (`app/utils/security.py:IpFingerprint`); Supabase Free pauses after 1 week inactivity / 500 MB.
 - Go ingress, Cloud Tasks and OIDC never exercised against GCP; docker build only proven in CI.
-- Open payments follow-ups S1, S6 and G1, S4 in registers.md.
-- Never run install/dev/build/test on uninspected commits, or on UI commits before fd1032e (AGENTS.md rule).
+- Open follow-ups S1, S6, G1, S4, U1-U7 in registers.md.
+- Never run install/dev/build/test on uninspected commits, or on UI commits before fd1032e; tests never load .env or reach external hosts (AGENTS.md).
 
 ## Standing authorization
 None. Each task grants its own; the owner commits and pushes.
 
 ## Next bounded step
-Merge this docs PR, then T-DOCS-UI in imageopz-ui.
+Owner pushes feat/presigned-uploads and merges after checks; then T-006b2.

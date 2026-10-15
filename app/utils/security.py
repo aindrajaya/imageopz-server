@@ -24,6 +24,14 @@ class SecurityValidator:
     }
     
     ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
+
+    # Pillow decoder per allowed MIME type: untrusted uploads are opened with only that decoder (formats=[...]).
+    PIL_FORMATS = {"image/jpeg": "JPEG", "image/png": "PNG", "image/webp": "WEBP"}
+
+    @staticmethod
+    def pil_formats(mime_type: Optional[str]) -> Optional[list]:
+        fmt = SecurityValidator.PIL_FORMATS.get(mime_type or "")
+        return [fmt] if fmt else None
     
     @staticmethod
     def validate_file_extension(filename: str) -> bool:
@@ -98,13 +106,13 @@ class SecurityValidator:
         return clean
 
     @staticmethod
-    def strip_exif_and_metadata_path_with_dimensions(file_path: str) -> tuple[bytes, int, int]:
+    def strip_exif_and_metadata_path_with_dimensions(file_path: str, formats: Optional[list] = None) -> tuple[bytes, int, int]:
         """
         Remove EXIF/metadata from an image stored on disk.
         Returns clean image data and original dimensions (width, height).
         """
         try:
-            img = Image.open(file_path)
+            img = Image.open(file_path, formats=formats)
             width, height = img.size
             data = list(img.getdata())
             image_without_exif = Image.new(img.mode, img.size)
@@ -150,12 +158,21 @@ class SecurityValidator:
             )
 
     @staticmethod
-    def validate_decompression_bomb_protection_path(file_path: str) -> bool:
+    def read_header_dimensions(head: bytes, formats: Optional[list] = None) -> Tuple[int, int]:
+        """
+        (width, height) from the first bytes of an image without decoding pixels (header-only open).
+        Raises PIL errors when the header is unreadable; Image.DecompressionBombError above Pillow's own limit.
+        """
+        with Image.open(io.BytesIO(head), formats=formats) as img:
+            return int(img.width), int(img.height)
+
+    @staticmethod
+    def validate_decompression_bomb_protection_path(file_path: str, formats: Optional[list] = None) -> bool:
         """
         Validate image won't cause OOM when decompressed (path-based).
         """
         try:
-            img = Image.open(file_path)
+            img = Image.open(file_path, formats=formats)
             total_pixels = img.width * img.height
 
             if total_pixels > settings.max_image_pixels:
