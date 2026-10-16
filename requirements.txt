@@ -20,4 +20,5 @@ psutil==6.0.0
 alembic==1.16.5
 psycopg[binary]==3.2.13
 google-auth==2.41.1
+google-cloud-tasks==2.26.0
 requests==2.34.2

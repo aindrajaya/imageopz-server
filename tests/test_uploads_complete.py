@@ -9,12 +9,18 @@ PNG = "image/png"
 
 
 @pytest.fixture()
-def enqueued(monkeypatch):
-    from app.workers.job_worker import job_queue
+def enqueuer(monkeypatch):
+    from app.services import job_enqueuer
+    from tests.upload_fakes import FakeEnqueuer
 
-    calls = []
-    monkeypatch.setattr(job_queue, "enqueue_job", lambda job_id: calls.append(job_id) or True)
-    return calls
+    fake = FakeEnqueuer()
+    monkeypatch.setattr(job_enqueuer, "get_enqueuer", lambda: fake)
+    return fake
+
+
+@pytest.fixture()
+def enqueued(enqueuer):
+    return enqueuer.calls
 
 
 def _presign(client, sid, files):
@@ -180,9 +186,7 @@ def test_credit_released_exactly_once_across_reject_sweeper_and_repeat(client, f
     assert enqueued == []
 
 
-def test_partial_enqueue_failure_reverts_only_failed_jobs(client, fake_store, monkeypatch):
-    from app.workers.job_worker import job_queue
-
+def test_partial_enqueue_failure_reverts_only_failed_jobs(client, fake_store, enqueuer):
     sid = "sess_partial_enqueue"
     data = png_bytes()
     files = _presign(client, sid, [("a.png", len(data), PNG), ("b.png", len(data), PNG)])
@@ -190,8 +194,8 @@ def test_partial_enqueue_failure_reverts_only_failed_jobs(client, fake_store, mo
         fake_store.put(f["object_key"], data, PNG)
     first, second = files[0]["job_id"], files[1]["job_id"]
 
-    calls = []
-    monkeypatch.setattr(job_queue, "enqueue_job", lambda job_id: calls.append(job_id) or job_id == first)
+    calls = enqueuer.calls
+    enqueuer.accept = lambda job_id: job_id == first
     res = _complete(client, sid, [first, second])
     assert res.status_code == 503, res.text
     assert res.json()["error"] == "QUEUE_UNAVAILABLE"
@@ -203,7 +207,7 @@ def test_partial_enqueue_failure_reverts_only_failed_jobs(client, fake_store, mo
     assert _credits(sid) == 2
     attempted = len(calls)
 
-    monkeypatch.setattr(job_queue, "enqueue_job", lambda job_id: calls.append(job_id) or True)
+    enqueuer.accept = lambda job_id: True
     retry = _complete(client, sid, [first, second])
     assert retry.status_code == 200, retry.text
     assert [j["status"] for j in retry.json()["jobs"]] == ["pending", "pending"]
@@ -213,7 +217,7 @@ def test_partial_enqueue_failure_reverts_only_failed_jobs(client, fake_store, mo
 
 
 def test_complete_returns_503_when_queue_unavailable(client, fake_store):
-    # Replaces test_optimize_returns_503_when_queue_unavailable: Redis is unreachable in tests (conftest).
+    # Replaces test_optimize_returns_503_when_queue_unavailable: JOB_ENQUEUE_MODE is unset in tests (fail closed).
     f = _upload_png(client, fake_store, "sess_queue_down")
     res = _complete(client, "sess_queue_down", [f["job_id"]])
     assert res.status_code == 503, res.text

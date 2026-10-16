@@ -71,6 +71,15 @@ class Settings(BaseSettings):
     internal_auth_audience: Optional[str] = None
     internal_auth_allowed_emails: str = ""  # comma-separated service-account emails
 
+    # Job processing (ADR-005): /uploads/complete and the sweeper enqueue POST /internal/jobs/process.
+    job_enqueue_mode: Optional[str] = None  # "cloudtasks" | "direct" (local dev); unset refuses every enqueue
+    job_tasks_queue: Optional[str] = None  # projects/<project>/locations/<region>/queues/<queue>
+    job_tasks_target_url: Optional[str] = None  # worker base URL; "direct" posts here too
+    job_tasks_sa_email: Optional[str] = None  # service account whose OIDC token Cloud Tasks sends
+    job_tasks_audience: Optional[str] = None  # must match INTERNAL_AUTH_AUDIENCE on the worker
+    job_lease_seconds: int = 1800  # a PROCESSING job may be reclaimed by a redelivery after this
+    job_stale_pending_seconds: int = 600  # the sweeper re-enqueues PENDING jobs queued longer ago than this
+
     def internal_auth_allowed_emails_list(self) -> list:
         return [e.strip().lower() for e in self.internal_auth_allowed_emails.split(",") if e.strip()]
 
