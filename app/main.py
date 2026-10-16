@@ -1,6 +1,7 @@
 """
 FastAPI application factory and startup/shutdown logic.
 Initializes the database and API routes; jobs run via POST /internal/jobs/process (ADR-005).
+SERVICE_ROLE picks the routes: api = public only, worker = /internal/* and health only, all = both (local, tests).
 """
 
 from fastapi import FastAPI
@@ -67,6 +68,10 @@ def create_app() -> FastAPI:
     Returns:
         Configured FastAPI instance
     """
+    role = settings.service_role
+    mount_public = role in ("api", "all")
+    mount_internal = role in ("worker", "all")
+
     app = FastAPI(
         title="ImageOpz Backend API",
         description="High-performance image optimization service with AVIF support",
@@ -74,16 +79,17 @@ def create_app() -> FastAPI:
         lifespan=lifespan
     )
     
-    # Add CORS middleware
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=settings.cors_allow_origins_list(),
-        allow_credentials=settings.cors_allow_credentials,
-        allow_methods=["GET", "POST", "OPTIONS"],
-        # Must include Authorization for Supabase JWT authenticated calls.
-        # Keep explicit list (not '*') because we may use credentials in dev/prod.
-        allow_headers=["Content-Type", "X-Session-Id", "Authorization"],
-    )
+    # CORS only where browsers call: the worker is reached by Cloud Tasks and Cloud Scheduler only.
+    if mount_public:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=settings.cors_allow_origins_list(),
+            allow_credentials=settings.cors_allow_credentials,
+            allow_methods=["GET", "POST", "OPTIONS"],
+            # Must include Authorization for Supabase JWT authenticated calls.
+            # Keep explicit list (not '*') because we may use credentials in dev/prod.
+            allow_headers=["Content-Type", "X-Session-Id", "Authorization"],
+        )
     
     # Add compression middleware
     app.add_middleware(GZipMiddleware, minimum_size=1000)
@@ -138,23 +144,27 @@ def create_app() -> FastAPI:
     
     # Include routes
     app.include_router(health.router)
-    app.include_router(optimization.router)
-    app.include_router(uploads.router)
-    app.include_router(session.router)
-    app.include_router(internal.router)
-    
-    # Root endpoint
-    @app.get("/")
-    async def root():
-        """API root endpoint"""
-        return {
-            "name": "ImageOpz Backend API",
-            "version": "1.0.0",
-            "status": "running",
-            "docs": "/docs",
-            "health": "/health"
-        }
-    
+    if mount_public:
+        app.include_router(optimization.router)
+        app.include_router(uploads.router)
+        app.include_router(session.router)
+    if mount_internal:
+        app.include_router(internal.router)
+
+    if mount_public:
+        # Root endpoint
+        @app.get("/")
+        async def root():
+            """API root endpoint"""
+            return {
+                "name": "ImageOpz Backend API",
+                "version": "1.0.0",
+                "status": "running",
+                "docs": "/docs",
+                "health": "/health"
+            }
+
+    logger.info("Service role: %s", role)
     return app
 
 

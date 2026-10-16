@@ -201,6 +201,46 @@ def client(test_env):
 
 
 @pytest.fixture()
+def make_client(test_env):
+    """
+    make_client(SERVICE_ROLE="worker", ENVIRONMENT="staging", ...) -> a TestClient built with those environment
+    variables. The variables are restored and the modules reloaded at teardown, so later tests see the test defaults.
+    """
+    import app.config as config
+    import app.models as models
+    import app.main as main
+
+    saved, clients = {}, []
+
+    def reload_all():
+        importlib.reload(config)
+        importlib.reload(models)
+        importlib.reload(main)
+        models.db.init_db()
+
+    def _make(**env):
+        for key, value in env.items():
+            saved.setdefault(key, os.environ.get(key))
+            os.environ[key] = value
+        reload_all()
+        c = TestClient(main.app)
+        c.__enter__()
+        clients.append(c)
+        return c
+
+    yield _make
+    for c in clients:
+        c.__exit__(None, None, None)
+    for key, value in saved.items():
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
+    if saved:
+        reload_all()
+
+
+@pytest.fixture()
 def fake_store(client, monkeypatch):
     """In-memory uploads bucket used by the upload routes, sweeper and worker (no network)."""
     from app.services import upload_store

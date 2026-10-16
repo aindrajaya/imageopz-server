@@ -12,11 +12,11 @@
           "health"
         ],
         "summary": "Health Check",
-        "description": "Check service health and dependencies.\nReturns status of the API and its database connection.",
+        "description": "Liveness: the process answers. No dependency checks and no error text (H1); readiness is /readyz.",
         "operationId": "health_check_health_get",
         "responses": {
           "200": {
-            "description": "Service is healthy",
+            "description": "Service is alive",
             "content": {
               "application/json": {
                 "schema": {

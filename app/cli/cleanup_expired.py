@@ -1,5 +1,6 @@
 """
-Delete expired outputs once: `python -m app.cli.cleanup_expired` (scheduling is T-008). Idempotent.
+Delete expired outputs once: `python -m app.cli.cleanup_expired` (manual runs; scheduled runs use
+POST /internal/maintenance/cleanup on the worker). Idempotent.
 Exit 1 when an R2 delete failed or the database is unreachable.
 """
 
@@ -7,8 +8,8 @@ import logging
 
 from app.config import settings
 from app.models import db
+from app.services import maintenance
 from app.services.image_service import r2_storage
-from app.services.output_cleanup import cleanup_expired_outputs
 
 logger = logging.getLogger("imageopz.cleanup")
 
@@ -20,14 +21,14 @@ def main() -> int:
     )
     session = db.get_session()
     try:
-        deleted, failed = cleanup_expired_outputs(session, r2_storage)
+        counts = maintenance.cleanup(session, r2_storage)
     except Exception:
         logger.exception("Cleanup failed")
         return 1
     finally:
         session.close()
-    print(f"expired outputs deleted: {deleted}; failed: {failed}")
-    return 1 if failed else 0
+    print(f"expired outputs deleted: {counts.deleted}; failed: {counts.failed}")
+    return 1 if counts.failed else 0
 
 
 if __name__ == "__main__":

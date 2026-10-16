@@ -1,6 +1,6 @@
 """
-Internal endpoints called by trusted services via Cloud Tasks (Go payments ingress; job enqueuer, ADR-005).
-Not public API.
+Internal endpoints called by trusted services: Cloud Tasks (Go payments ingress; job enqueuer, ADR-005) and Cloud
+Scheduler (maintenance, ADR-005 amendment). Mounted only when SERVICE_ROLE is worker or all. Not public API.
 """
 import json
 import logging
@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from app.models import db, get_db
+from app.services import image_service, maintenance
 from app.services.payments import apply_lemonsqueezy_body
 from app.utils.internal_auth import require_internal_auth
 from app.workers.job_worker import JobWorker, Outcome
@@ -69,3 +70,50 @@ async def process_job(request: Request):
     if outcome == Outcome.RETRY:
         return JSONResponse(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, content={"status": "retry"})
     return {"status": outcome.value}
+
+
+_RETRY = {"status": "retry"}
+
+
+def _with_session(fn, *args):
+    session = db.get_session()
+    try:
+        return fn(session, *args)
+    finally:
+        session.close()
+
+
+@router.post("/maintenance/sweep")
+async def maintenance_sweep():
+    """
+    Cloud Scheduler target; same work as `python -m app.cli.sweep_uploads`, idempotent.
+    200 {"status": "ok", expired_uploads, requeued, enqueue_failures, failed}; 503 {"status": "retry"} when the database
+    fails or a re-enqueue failed (details are logged, never returned); 401 auth.
+    """
+    try:
+        counts = await run_in_threadpool(_with_session, maintenance.sweep)
+    except Exception:
+        logger.exception("Maintenance sweep failed")
+        return JSONResponse(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, content=_RETRY)
+    if counts.enqueue_failures:
+        logger.error("Maintenance sweep: %d re-enqueue failure(s)", counts.enqueue_failures)
+        return JSONResponse(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, content=_RETRY)
+    return {"status": "ok", **counts.as_dict()}
+
+
+@router.post("/maintenance/cleanup")
+async def maintenance_cleanup():
+    """
+    Cloud Scheduler target; same work as `python -m app.cli.cleanup_expired`, idempotent.
+    200 {"status": "ok", deleted, failed}; 503 {"status": "retry"} when the database fails or an R2 delete failed
+    (retried next run); 401 auth.
+    """
+    try:
+        counts = await run_in_threadpool(_with_session, maintenance.cleanup, image_service.r2_storage)
+    except Exception:
+        logger.exception("Maintenance cleanup failed")
+        return JSONResponse(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, content=_RETRY)
+    if counts.failed:
+        logger.error("Maintenance cleanup: %d R2 delete failure(s)", counts.failed)
+        return JSONResponse(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, content=_RETRY)
+    return {"status": "ok", **counts.as_dict()}
