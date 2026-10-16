@@ -121,11 +121,36 @@ def test_maintenance_oidc_allows_listed_scheduler_only(client, monkeypatch, enqu
     assert client.post(path, headers=bearer).status_code == 200
 
 
-def test_unauthenticated_maintenance_calls_change_nothing(client, fake_store, enqueuer):
-    stale = _add_job("UPLOADING", upload_expires_at=datetime.utcnow() - timedelta(seconds=1))
-    assert _post(client, SWEEP, token=None).status_code == 401
-    assert _job(stale).status.name == "UPLOADING"
-    assert enqueuer.calls == []
+def _set_auth(monkeypatch, mode):
+    from app.utils import internal_auth
+
+    s = internal_auth.settings
+    monkeypatch.setattr(s, "internal_auth_shared_secret", TOKEN)
+    monkeypatch.setattr(s, "internal_auth_audience", "https://worker.example.test")
+    monkeypatch.setattr(s, "internal_auth_allowed_emails", "iz-scheduler@p.iam.gserviceaccount.com")
+    monkeypatch.setattr(internal_auth, "_verify_oidc_token",
+                        lambda token, audience: {"email": "evil@p.iam.gserviceaccount.com", "email_verified": True})
+    monkeypatch.setattr(s, "internal_auth_mode", mode)
+
+
+@pytest.mark.parametrize("path", [SWEEP, CLEANUP])
+@pytest.mark.parametrize("mode,headers", [
+    (None, {"X-Internal-Token": TOKEN}),
+    ("shared_secret", {"X-Internal-Token": "wrong"}),
+    ("oidc", {"Authorization": "Bearer tok"}),  # disallowed email
+])
+def test_rejected_maintenance_calls_change_nothing(client, fake_store, enqueuer, outputs, monkeypatch, path, mode, headers):
+    _set_auth(monkeypatch, mode)
+    upload = _add_job("UPLOADING", upload_expires_at=datetime.utcnow() - timedelta(seconds=1))
+    pending = _add_job("PENDING", enqueued_at=datetime.utcnow() - timedelta(seconds=601))
+    expired = _add_job("DONE", r2_object_key=f"optimized/{uuid.uuid4()}.avif", r2_url="https://cdn.invalid/k",
+                       expiry_date=datetime.utcnow() - timedelta(days=1))
+
+    assert client.post(path, headers=headers).status_code == 401
+    assert _job(upload).status.name == "UPLOADING"
+    assert _job(pending).status.name == "PENDING" and _job(pending).enqueue_attempts in (0, None)
+    assert _job(expired).deleted_at is None
+    assert enqueuer.calls == [] and outputs.deleted == [] and fake_store.deleted == []
 
 
 # ---- sweep ----

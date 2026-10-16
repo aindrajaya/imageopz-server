@@ -76,7 +76,9 @@ def create_app() -> FastAPI:
         title="ImageOpz Backend API",
         description="High-performance image optimization service with AVIF support",
         version="1.0.0",
-        lifespan=lifespan
+        lifespan=lifespan,
+        # The worker is reached only by Cloud Tasks and Cloud Scheduler: no interactive docs or schema there.
+        **({} if mount_public else {"docs_url": None, "redoc_url": None, "openapi_url": None}),
     )
     
     # CORS only where browsers call: the worker is reached by Cloud Tasks and Cloud Scheduler only.

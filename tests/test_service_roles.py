@@ -34,10 +34,9 @@ def test_api_role_does_not_mount_internal_routes(make_client, internal):
 def test_worker_role_mounts_only_internal_and_health(make_client, internal):
     c = make_client(SERVICE_ROLE="worker")
     public = [p for p in _paths(c.app) if p and not p.startswith("/internal")]
-    assert sorted(p for p in public if p not in ("/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc")) == [
-        "/health", "/readyz", "/version",
-    ]
+    assert sorted(public) == ["/health", "/readyz", "/version"]  # no docs, no schema, no public API
     for method, path in (("get", "/api/v1/session/me"), ("post", "/api/v1/uploads/presign"),
+                         ("get", "/docs"), ("get", "/openapi.json"),
                          ("post", "/api/v1/webhooks/lemonsqueezy"), ("get", "/api/v1/status/x"), ("get", "/")):
         assert getattr(c, method)(path).status_code == 404, path
     assert c.get("/health").status_code == 200
@@ -93,3 +92,11 @@ def test_committed_openapi_matches_the_app(client):
 
     committed = json.loads((Path(__file__).resolve().parents[1] / "docs" / "openapi.json").read_text())
     assert client.app.openapi() == committed
+
+
+def test_api_role_cors_preflight_to_internal_reaches_no_handler(make_client, internal):
+    # CORSMiddleware answers preflights itself; the actual request still finds no route.
+    c = make_client(SERVICE_ROLE="api", CORS_ALLOW_ORIGINS="http://localhost")
+    c.options("/internal/jobs/process", headers={"Origin": "http://localhost", "Access-Control-Request-Method": "POST"})
+    res = c.post("/internal/jobs/process", json={"job_id": "x"}, headers={"Origin": "http://localhost", "X-Internal-Token": TOKEN})
+    assert res.status_code == 404

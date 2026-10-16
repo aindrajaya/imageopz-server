@@ -29,8 +29,9 @@ async def health_check():
 
 
 @router.get("/readyz", include_in_schema=False)
-async def readiness_check(db_session: Session = Depends(get_db)):
-    """Readiness: 200 when the database answers, else 503. Generic bodies only; the error is logged."""
+def readiness_check(db_session: Session = Depends(get_db)):
+    """Readiness: 200 when the database answers, else 503. Generic bodies only; the error is logged. Sync def: the
+    blocking DB call runs in the threadpool, so a stalled pooler cannot block /health on the event loop."""
     try:
         db_session.execute(text("SELECT 1"))
     except Exception:
