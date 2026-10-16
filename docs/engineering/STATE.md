@@ -1,6 +1,6 @@
 ---
 project: imageopz-server
-updated: 2026-10-16 by Claude Code (T-006b2 amendment, pending merge)
+updated: 2026-10-16 by Claude Code (T-007 start: merge record)
 ---
 
 # STATE - ImageOpz
@@ -10,8 +10,8 @@ Migrate ImageOpz to GCP Cloud Run + Supabase Postgres, with a Go payments ingres
 before applying to Sticker Mule on Mon 19 Oct 2026.
 
 ## Accepted baseline
-- `main` @ `1dc3d67` (PR #15). SQLite 110 passed/9 skipped; Postgres 16.15 (Homebrew) 119 passed; `alembic heads` = 0004.
-- Branch `chore/remove-optimize` (T-006b2, two local commits, not pushed): SQLite 108 passed/9 skipped; Postgres 117 passed; `alembic heads` = 0005. CI checks: `pytest (sqlite)`, `pytest (postgres)`; payments-go workflow is path-filtered.
+- `main` @ `4ee31e5` (PR #16, T-006b2). SQLite 108 passed/9 skipped; Postgres 16.15 (Homebrew) 117 passed; `alembic heads` = 0005 (verified 2026-10-16 at T-007 start). CI checks: `pytest (sqlite)`, `pytest (postgres)`; payments-go workflow is path-filtered.
+- imageopz-ui: T-006c merged as PR #3 (`b509117`), followed by an svg fix PR (REPORTED by the owner; number and SHA not recorded here).
 - Deployed: none; ImageOpz offline. The migrations have never run against Supabase.
 - Env: Python 3.11 venv `~/.venvs/imageopz` (rebuilt by the owner, libmagic installed); no Docker; throwaway Postgres from Postgres.app or Homebrew (runbooks/local-postgres.md).
 
@@ -30,7 +30,8 @@ before applying to Sticker Mule on Mon 19 Oct 2026.
 | Security incident recorded (registers.md "Incidents") and guardrail rule (AGENTS.md) | #13 | 6f757a4 |
 | T-006b presigned uploads backend, phase 1 (spike, expand), rebase merge | #14 | 7810ada, fc89b1b, ad32c65, fe7f405 |
 | T-006b merge record (docs) | #15 | 1dc3d67 |
-| T-006b2 legacy multipart endpoint and local-disk uploads removed, Alembic 0005, U14 fixed | pending (branch chore/remove-optimize) | - |
+| T-006b2 legacy multipart endpoint and local-disk uploads removed, Alembic 0005, U14 fixed, /internal out of OpenAPI | #16 | 4ee31e5 |
+| T-006c frontend presigned uploads (imageopz-ui) | imageopz-ui #3 + svg fix PR | b509117 (svg fix: not recorded) |
 
 ## Repo settings (verified 2026-10-15 via gh)
 - Both repos PUBLIC; secret scanning and push protection enabled on both.
@@ -50,10 +51,8 @@ users/users_quota/orders. Squash merges. Uploads use their own R2 token (no fall
 ## Open tasks
 | Task | Scope | Status |
 |---|---|---|
-| T-006b2 | Legacy upload path removed, Alembic 0005, U14 fixed (tasks/T-006b2-remove-optimize.md) | done, pending owner push/PR/merge |
-| T-006c | Frontend upload change in imageopz-ui (contract: contracts/uploads-api.md); presign/complete is now the only upload path | next |
 | T-DOCS-UI | Docs for imageopz-ui (other repo) | open |
-| T-007 | Cloud Tasks worker, remove Redis, schedule the upload sweeper (+ runbooks/local-run.md, drop monitor_memory.py) | open |
+| T-007 | Cloud Tasks worker, remove Redis and APScheduler, scheduled CLIs (tasks/T-007-cloud-tasks-worker.md) | in progress (branch feat/cloud-tasks-worker) |
 | T-008 | Containers + Cloud Run deploy; checklist in registers.md | open |
 
 ## Owner items
@@ -71,4 +70,4 @@ users/users_quota/orders. Squash merges. Uploads use their own R2 token (no fall
 None. Each task grants its own; the owner commits and pushes.
 
 ## Next bounded step
-Owner merges T-006b2; then T-006c in imageopz-ui.
+T-007 on branch feat/cloud-tasks-worker.
