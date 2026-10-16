@@ -6,9 +6,8 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 
-from app.models import db, get_db
+from app.models import get_db
 from app.schemas import HealthCheckResponse
-from app.workers.job_worker import job_queue
 
 router = APIRouter(tags=["health"])
 
@@ -21,23 +20,12 @@ router = APIRouter(tags=["health"])
 async def health_check(db_session: Session = Depends(get_db)):
     """
     Check service health and dependencies.
-    Returns status of API, database, and Redis connections.
+    Returns status of the API and its database connection.
     """
     try:
-        # Check database
         db_session.execute(text("SELECT 1"))
-        
-        # Check Redis
-        redis_status = "disconnected"
-        if job_queue.redis_client:
-            try:
-                job_queue.redis_client.ping()
-                redis_status = "connected"
-            except Exception:
-                redis_status = "error"
-        
         return HealthCheckResponse(
-            status=f"healthy ({redis_status})",
+            status="healthy",
             version="1.0.0"
         )
     except Exception as e:

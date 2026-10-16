@@ -41,7 +41,6 @@ from app.services.quota_context import (
 )
 from app.utils.supabase_auth import SupabaseIdentity
 from app.services.payments import apply_lemonsqueezy_body
-from app.workers.job_worker import job_queue
 from app.config import settings
 
 router = APIRouter(prefix="/api/v1", tags=["optimization"])
@@ -278,8 +277,6 @@ async def get_job_status(
             if not quota or quota.user_id != user.id:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Job {job_id} not found")
         
-        progress = job_queue.get_job_progress(job_id) if job_queue else None
-
         return JobStatusResponse(
             job_id=job.id,
             status=job.status.value,
@@ -297,8 +294,6 @@ async def get_job_status(
             processing_started_at=getattr(job, "processing_started_at", None),
             processing_finished_at=getattr(job, "processing_finished_at", None),
             processing_duration_ms=getattr(job, "processing_duration_ms", None),
-            progress=progress.get("progress") if progress else None,
-            progress_status=progress.get("status") if progress else None,
         )
     
     except HTTPException:

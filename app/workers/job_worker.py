@@ -1,18 +1,14 @@
 """
-Redis queue management and async job worker.
-Uses Redis as message broker for job processing.
+Job worker: processes one job per Cloud Tasks delivery of POST /internal/jobs/process (ADR-005).
 """
 
 import enum
-import json
 import logging
 import os
-import redis
 import tempfile
 import time
-from typing import Optional, List
+from typing import Optional
 from datetime import datetime, timedelta
-from uuid import uuid4
 
 from sqlalchemy import and_, or_, update
 
@@ -25,150 +21,7 @@ from app.services.uploads import delete_source_best_effort
 from app.utils.security import SecurityValidator
 
 
-logger = logging.getLogger("imageopz.queue")
-
-
-class JobQueue:
-    """Manages job queue in Redis"""
-    
-    def __init__(self):
-        self.redis_client = None
-        self._init_redis()
-    
-    def _init_redis(self):
-        """Initialize Redis connection"""
-        try:
-            self.redis_client = redis.from_url(
-                settings.redis_url,
-                decode_responses=False,
-                socket_connect_timeout=5,
-                socket_keepalive=True
-            )
-            # Test connection
-            self.redis_client.ping()
-        except redis.ConnectionError:
-            logger.warning("Could not connect to Redis at %s", settings.redis_url)
-    
-    def enqueue_job(self, job_id: str) -> bool:
-        """
-        Add job ID to processing queue.
-        
-        Args:
-            job_id: Job UUID to enqueue
-        
-        Returns:
-            True if enqueued successfully
-        """
-        if not self.redis_client:
-            return False
-        
-        try:
-            self.redis_client.rpush(settings.queue_name, job_id)
-            return True
-        except Exception as e:
-            logger.exception("Failed to enqueue job %s", job_id)
-            return False
-    
-    def dequeue_job(self) -> Optional[str]:
-        """
-        Get next job from queue for processing.
-        
-        Returns:
-            Job ID or None if queue empty
-        """
-        if not self.redis_client:
-            return None
-        
-        try:
-            job_id = self.redis_client.lpop(settings.queue_name)
-            return job_id.decode("utf-8") if job_id else None
-        except Exception as e:
-            logger.exception("Failed to dequeue job")
-            return None
-
-    def dequeue_job_blocking(self, timeout_seconds: int = 5) -> Optional[str]:
-        """
-        Blocking pop to avoid busy looping.
-
-        Returns:
-            Job ID or None on timeout/error.
-        """
-        if not self.redis_client:
-            return None
-
-        try:
-            res = self.redis_client.blpop(settings.queue_name, timeout=timeout_seconds)
-            if not res:
-                return None
-            _, job_id = res
-            return job_id.decode("utf-8") if job_id else None
-        except Exception as e:
-            logger.exception("Failed to dequeue job (blocking)")
-            return None
-    
-    def queue_length(self) -> int:
-        """Get current queue size"""
-        if not self.redis_client:
-            return 0
-        
-        try:
-            return self.redis_client.llen(settings.queue_name)
-        except Exception as e:
-            logger.exception("Failed to get queue length")
-            return 0
-    
-    def set_job_progress(self, job_id: str, progress: float, status: str = None):
-        """
-        Store job progress in Redis for real-time updates.
-        
-        Args:
-            job_id: Job ID
-            progress: Progress percentage (0-100)
-            status: Optional status message
-        """
-        if not self.redis_client:
-            return
-        
-        try:
-            key = f"job:{job_id}:progress"
-            data = {
-                "progress": min(100, max(0, progress)),
-                "timestamp": datetime.utcnow().isoformat()
-            }
-            if status:
-                data["status"] = status
-            
-            self.redis_client.setex(
-                key,
-                86400,  # 24 hour TTL
-                json.dumps(data).encode("utf-8")
-            )
-        except Exception as e:
-            logger.exception("Failed to set job progress for %s", job_id)
-    
-    def get_job_progress(self, job_id: str) -> Optional[dict]:
-        """
-        Retrieve job progress from Redis.
-        
-        Returns:
-            Progress data dict or None
-        """
-        if not self.redis_client:
-            return None
-        
-        try:
-            key = f"job:{job_id}:progress"
-            data = self.redis_client.get(key)
-            if not data:
-                return None
-            return json.loads(data.decode("utf-8"))
-        except Exception as e:
-            logger.exception("Failed to get job progress for %s", job_id)
-            return None
-
-
-# Global instance
-job_queue = JobQueue()
+logger = logging.getLogger("imageopz.worker")
 
 
 class Outcome(str, enum.Enum):
@@ -202,9 +55,8 @@ def claim_job(db_session, job_id: str, now: datetime, lease_seconds: int) -> boo
 class JobWorker:
     """Processes one job per delivery (POST /internal/jobs/process)."""
 
-    def __init__(self, db_session, queue: Optional[JobQueue] = None, store: Optional[UploadStore] = None):
+    def __init__(self, db_session, store: Optional[UploadStore] = None):
         self.db_session = db_session
-        self.queue = queue or job_queue
         self.optimizer = ImageOptimizer()
         self.store = store
         self._source_tmp_path: Optional[str] = None
@@ -242,15 +94,18 @@ class JobWorker:
             # Duplicate delivery, a job still UPLOADING/REJECTED, finished, or under another delivery's lease.
             logger.info("Job %s is %s; not processing", job_id, job.status.name)
             return Outcome.SKIPPED
+        # End the transaction the refresh began: processing can take minutes and must not pin a pooled connection.
+        self.db_session.expunge(job)
+        self.db_session.commit()
         t0 = time.perf_counter()
-        self.queue.set_job_progress(job_id, 10, "Processing started")
 
         try:
             values = self._optimize(job)
             status = JobStatus.DONE
         except TransientJobError:
             logger.warning("Job %s: transient failure; released for retry", job_id, exc_info=True)
-            released = self._finish(job_id, claimed_at, status=JobStatus.PENDING)
+            # enqueued_at restarts the stale-PENDING clock, so the sweeper does not add tasks while Cloud Tasks retries.
+            released = self._finish(job_id, claimed_at, status=JobStatus.PENDING, enqueued_at=datetime.utcnow())
             return Outcome.RETRY if released else Outcome.SKIPPED
         except JobFailed as e:
             values, status = {"processing_error": str(e)}, JobStatus.FAILED
@@ -269,8 +124,6 @@ class JobWorker:
         if not finished:
             logger.warning("Job %s: claim lost (reclaimed or failed by the sweeper); result not written", job_id)
             return Outcome.SKIPPED
-        if status == JobStatus.DONE:
-            self.queue.set_job_progress(job_id, 100, "Optimization complete")
         return Outcome.DONE if status == JobStatus.DONE else Outcome.FAILED
 
     def _finish(self, job_id: str, claimed_at: datetime, **values) -> bool:
@@ -286,7 +139,6 @@ class JobWorker:
 
     def _optimize(self, job: Job) -> dict:
         """Column values for DONE; raises JobFailed (permanent) or TransientJobError (retriable)."""
-        self.queue.set_job_progress(job.id, 25, "Stripping metadata")
         try:
             if not job.source_object_key:
                 raise Exception("Original file not found")
@@ -304,13 +156,11 @@ class JobWorker:
         except Exception as e:
             raise JobFailed(f"Metadata stripping failed: {e}")
 
-        self.queue.set_job_progress(job.id, 40, "Optimizing image")
         try:
             optimized_data, optimized_size = self.optimizer.optimize_image(file_data, quality=job.quality_setting)
         except Exception as e:
             raise JobFailed(f"Image optimization failed: {e}")
 
-        self.queue.set_job_progress(job.id, 70, "Uploading to storage")
         # A job is never DONE without an uploaded result (U14); missing configuration is permanent.
         if not r2_storage:
             raise JobFailed("R2 upload failed: outputs storage not configured")
@@ -331,8 +181,12 @@ class JobWorker:
         """Stream the uploads-bucket object to a temp file; refuses more bytes than were declared at presign.
         A missing object is permanent; any other storage error is transient."""
         store = self.store or upload_store.get_upload_store()
-        if store.head(job.source_object_key) is None:
-            raise Exception("Source object not found")
+        try:
+            head = store.head(job.source_object_key)
+        except Exception as e:
+            raise TransientJobError("Source lookup failed") from e
+        if head is None:
+            raise JobFailed("Source object not found")
         fd, path = tempfile.mkstemp(prefix=f"imageopz-{job.id}-", suffix=".upload")
         self._source_tmp_path = path
         written = 0

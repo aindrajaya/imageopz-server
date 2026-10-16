@@ -28,7 +28,11 @@ the enqueue, or when an ambiguous enqueue failure is reverted.
 - U8: the sweeper CLI re-enqueues PENDING jobs whose `enqueued_at` is older than `JOB_STALE_PENDING_SECONDS` (600)
   with task name `-r<n>`, at most 3 times, then FAILs them; it FAILs PROCESSING jobs older than 2x the lease. FAILED
   keeps the credit spent, as for every other worker failure (refund policy: follow-up). The attempt counter is bumped
-  by a conditional UPDATE before the enqueue, so concurrent sweepers use each name once.
+  by a conditional UPDATE before the enqueue, so concurrent sweepers use each name once. The cap of 3 is beyond the
+  T-007 spec (which only asked to re-enqueue); it bounds a permanently failing job (e.g. bad output credentials).
+  A backlog that legitimately takes longer than ~40 min to drain would get jobs FAILed; revisit if queues are rate-limited.
+- The worker ends its transaction after the claim and holds no DB connection while processing (shared small pool).
+  A retriable release resets `enqueued_at`, so the sweeper does not add tasks while Cloud Tasks is still retrying.
 - New columns (Alembic 0006): `jobs.enqueued_at` (no existing column records when a job was queued; `created_at` is
   the presign time, up to 30 min earlier) and `jobs.enqueue_attempts` (Cloud Tasks keeps an executed task name
   reserved for up to 24 h, so a re-enqueue needs a new, deterministic name).
@@ -48,6 +52,8 @@ recommended. https://docs.cloud.google.com/tasks/docs/reference/rest/v2/projects
 - Cloud Run request timeout for the worker must be at least the dispatch deadline (1800 s), and the lease no shorter
   than it, so a reclaimed job's first delivery is gone (T-008).
 - Direct mode blocks `/complete` until the job is processed (local dev only).
+- The queue's retry config (`max_attempts`, backoff) bounds retries of transient failures before the sweeper does;
+  it must be set deliberately in T-008.
 ## Rollback
 Revert the T-007 commits; Alembic 0006 downgrade drops both columns.
 ## Validation

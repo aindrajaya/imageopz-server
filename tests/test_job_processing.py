@@ -147,7 +147,7 @@ def test_get_enqueuer_fails_closed(client, monkeypatch):
     s = job_enqueuer.settings
     monkeypatch.setattr(s, "job_enqueue_mode", None)
     assert job_enqueuer.get_enqueuer().enqueue("job-1") is False
-    monkeypatch.setattr(s, "job_enqueue_mode", "redis")
+    monkeypatch.setattr(s, "job_enqueue_mode", "unknown-mode")
     assert job_enqueuer.get_enqueuer().enqueue("job-1") is False
     monkeypatch.setattr(s, "job_enqueue_mode", "cloudtasks")  # queue/target/SA/audience unset
     assert isinstance(job_enqueuer.get_enqueuer(), job_enqueuer.DisabledEnqueuer)
@@ -462,3 +462,38 @@ def test_cleanup_cli_exits_nonzero_when_r2_delete_fails(client, monkeypatch):
     assert _job(job_id).deleted_at is None  # retried next run
     monkeypatch.setattr(cleanup_expired, "r2_storage", _Outputs())
     assert cleanup_expired.main() == 0
+
+
+def test_no_transaction_is_held_while_the_image_is_processed(client, fake_store, output, monkeypatch):
+    # Review finding (T-007): the worker shares the API's small pool; processing must not pin a connection.
+    from app.models import db
+    from app.workers.job_worker import JobWorker
+
+    job_id = _uploaded_job(fake_store)
+    seen = []
+    real = JobWorker._optimize
+
+    def spy(self, job):
+        seen.append(self.db_session.in_transaction())
+        return real(self, job)
+
+    monkeypatch.setattr(JobWorker, "_optimize", spy)
+    s = db.get_session()
+    try:
+        assert JobWorker(s, store=fake_store).process_job(job_id) is True
+    finally:
+        s.close()
+    assert seen == [False]
+
+
+def test_source_head_error_is_retriable(client, fake_store, internal, output, monkeypatch):
+    job_id = _uploaded_job(fake_store)
+
+    def broken_head(key):
+        raise ConnectionError("r2 head timeout")
+
+    monkeypatch.setattr(fake_store, "head", broken_head)
+    res = _deliver(client, job_id)
+    assert res.status_code == 503 and "head timeout" not in res.text
+    job = _job(job_id)
+    assert job.status.name == "PENDING" and job.enqueued_at is not None  # release restarts the stale-PENDING clock

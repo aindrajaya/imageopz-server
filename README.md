@@ -30,8 +30,9 @@ flowchart LR
 ```
 
 Uploads go straight from the browser to R2 through presigned URLs (backend done; the UI change is T-006c).
-The worker as a Cloud Tasks HTTP handler and the Cloud Run deployment are roadmap items (see below).
-Today the code still uses a Redis queue and a separate worker process.
+Jobs are processed by an internal HTTP endpoint fed by Cloud Tasks (OIDC, lease-based claim, idempotent on
+redelivery; [ADR-005](docs/engineering/adr/ADR-005-job-processing-cloud-tasks.md)); cleanup and sweeping are
+one-shot CLIs. The Cloud Run deployment is a roadmap item (see below).
 
 ## Payments flow
 1. The Go ingress verifies the `X-Signature` HMAC over the raw body and refuses everything if the secret is unset.
@@ -79,7 +80,7 @@ issues/              incident notes
 ## Roadmap
 Current state and open tasks are in [STATE.md](docs/engineering/STATE.md).
 - **T-006:** presigned direct-to-R2 uploads; backend done and the only upload path, UI in T-006c.
-- **T-007:** Cloud Tasks worker, remove Redis.
+- **T-007:** Cloud Tasks worker and one-shot CLIs replace the queue worker and in-process scheduler (pending merge).
 - **T-008:** containers and Cloud Run deployment (migration job, secrets, scheduler, payments ingress service).
 
 ## License

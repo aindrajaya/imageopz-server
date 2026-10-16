@@ -16,12 +16,12 @@ if str(PROJECT_ROOT) not in sys.path:
 # and every external-service variable gets a dummy value, so even a module imported at collection time (before
 # test_env) cannot hold real credentials. test_env below sets the per-test values.
 os.environ["IMAGEOPZ_ENV_FILE"] = ""
-for _key in ("INTERNAL_AUTH_MODE", "INTERNAL_AUTH_ALLOWED_EMAILS"):  # unset: tests opt in via monkeypatch
+_UNSET = ("INTERNAL_AUTH_MODE", "INTERNAL_AUTH_ALLOWED_EMAILS", "JOB_ENQUEUE_MODE", "JOB_TASKS_QUEUE", "JOB_TASKS_TARGET_URL",
+          "JOB_TASKS_SA_EMAIL", "JOB_TASKS_AUDIENCE")
+for _key in _UNSET:  # unset: tests opt in via monkeypatch
     os.environ.pop(_key, None)
 os.environ.update({
     "DATABASE_URL": "sqlite://",
-    "REDIS_URL": "redis://127.0.0.1:1/0",
-    "REDIS_PASSWORD": "dummy-redis-password",
     "SECRET_KEY": "test-secret-key",
     "R2_ACCOUNT_ID": "dummy-account",
     "R2_ACCESS_KEY_ID": "dummy-r2-key",
@@ -138,9 +138,6 @@ def test_env(tmp_path_factory):
     os.environ["DATABASE_URL"] = database_url
     os.environ["DATABASE_ECHO"] = "False"
     os.environ["SECRET_KEY"] = "test-secret-key"
-
-    # Force Redis to be absent; tests should not depend on a running redis-server.
-    os.environ["REDIS_URL"] = "redis://127.0.0.1:1/0"
 
     # Keep CORS simple for tests
     os.environ["CORS_ALLOW_ORIGINS"] = "http://localhost"

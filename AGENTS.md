@@ -15,7 +15,8 @@ Shared agent memory (CLAUDE.md is a symlink to this file). Every rule carries a 
 - app/routes/: optimization.py (optimize, status, checkout, LemonSqueezy webhook; large), uploads.py (presign, complete), session.py, health.py
 - Uploads: browser PUTs to R2 via presigned URLs; contract docs/engineering/contracts/uploads-api.md; sweeper python -m app.cli.sweep_uploads
 - app/models.py, app/config.py (env-driven settings and tier limits), app/utils/ (security, auth_deps, supabase_auth)
-- app/workers/ + run_worker.py: Redis queue worker and cleanup scheduler, a separate process (Cloud Tasks replaces it)
+- app/workers/job_worker.py: worker behind POST /internal/jobs/process, fed by Cloud Tasks (ADR-005); app/services/job_enqueuer.py
+- CLIs (scheduled in T-008): python -m app.cli.sweep_uploads (expired uploads, stale jobs), python -m app.cli.cleanup_expired
 - app/services/: image_service.py (Pillow/AVIF, R2), email_service.py; alembic/; tests/; issues/ (incident notes)
 - Identity: anonymous users by cookie imageopz_sid or X-Session-Id; Pro users by Supabase JWT; UsersQuota holds credits and Pro state
 - docs/PRD-backend.v3.md is the latest spec; ci-convert.py is a standalone AVIF CLI, unrelated to the server
@@ -31,7 +32,7 @@ Shared agent memory (CLAUDE.md is a symlink to this file). Every rule carries a 
 - Every new table enables RLS on Postgres - Supabase Data API exposes public; tests/test_rls_deny_all.py enforces it
 - App and migrations connect as the table-owner role - non-owners see zero rows under RLS
 - Python is the only writer of users, users_quota, orders; activation is idempotent per order - avoids drift and double grants (ADR-001)
-- Commit the Job row before enqueueing; the worker retries lookups - Redis can deliver before the DB commit is visible (issues/RACE_CONDITION_FIX.md)
+- Commit the Job row before enqueueing; the worker retries lookups - the queue can deliver before the DB commit is visible (issues/RACE_CONDITION_FIX.md)
 - Tests reload app.config, app.models, app.main per test; follow tests/conftest.py - settings and db are module singletons
 - Tests never load .env or reach external hosts; the conftest guard enforces it - a collection-time import once sent live API calls (T-006b)
 - Never edit existing test assertions to make a change pass; behavior changes update tests deliberately and say so - tests are the contract

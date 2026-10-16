@@ -29,11 +29,6 @@ class Settings(BaseSettings):
     # Postgres only: keep small for Cloud Run / Supabase pooler (max_overflow is fixed at 0)
     db_pool_size: int = 2
 
-    # Redis & Job Queue
-    redis_url: str = "redis://localhost:6379/0"
-    redis_password: Optional[str] = None
-    queue_name: str = "imageopz_jobs"
-
     # JWT & Security
     secret_key: str = "dev-secret-key-change-in-production"
     jwt_algorithm: str = "HS256"
@@ -116,14 +111,6 @@ class Settings(BaseSettings):
     # File Expiry
     free_tier_expiry_days: int = 7
     pro_tier_expiry_days: int = 40
-
-    # Cleanup
-    cleanup_cron_schedule: str = "0 * * * *"  # Hourly at minute 0
-    timezone: str = "Asia/Jakarta"
-
-    # Background worker
-    worker_enabled: bool = True
-    worker_poll_timeout_seconds: int = 5
 
     # Session cookie (browser id used for quota + payment relinking)
     session_cookie_name: str = "imageopz_sid"

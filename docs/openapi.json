@@ -12,7 +12,7 @@
           "health"
         ],
         "summary": "Health Check",
-        "description": "Check service health and dependencies.\nReturns status of API, database, and Redis connections.",
+        "description": "Check service health and dependencies.\nReturns status of the API and its database connection.",
         "operationId": "health_check_health_get",
         "responses": {
           "200": {
@@ -950,7 +950,7 @@
               }
             ],
             "title": "Progress",
-            "description": "Progress percentage (0-100)"
+            "description": "Deprecated, always null"
           },
           "progress_status": {
             "anyOf": [
@@ -962,7 +962,7 @@
               }
             ],
             "title": "Progress Status",
-            "description": "Progress status message"
+            "description": "Deprecated, always null"
           },
           "error_message": {
             "anyOf": [

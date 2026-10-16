@@ -238,7 +238,7 @@ async def complete_uploads(
 
     # Commit before enqueue (issues/RACE_CONDITION_FIX.md); jobs that fail to enqueue go back to UPLOADING.
     # The enqueuer blocks (gRPC or HTTP), so it runs off the event loop.
-    enqueuer = job_enqueuer.get_enqueuer()
+    enqueuer = await run_in_threadpool(job_enqueuer.get_enqueuer)  # first call may build the client (credential lookup)
     not_enqueued = [jid for jid in accepted if not await run_in_threadpool(enqueuer.enqueue, jid)]
     if not_enqueued:
         for jid in not_enqueued:
