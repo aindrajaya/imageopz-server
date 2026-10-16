@@ -57,8 +57,26 @@ recommended. https://docs.cloud.google.com/tasks/docs/reference/rest/v2/projects
 - Queue retry config (T-008 requirement): retries must reach beyond `JOB_LEASE_SECONDS` (1800), or a crashed job is
   never reclaimed by Cloud Tasks and only the sweeper FAILs it. E.g. `max_retry_duration` >= 2 h, `min_backoff` 30 s, `max_backoff` 600 s, `max_attempts` bounded. It also bounds retries of transient failures
   before the sweeper does.
+## Amendment 2026-10-17 (T-008b1, owner decision Q1): scheduled work via Cloud Scheduler -> worker endpoints
+- Context: Cloud Run Jobs bill instance time with a 1-minute minimum per execution. A 15-min sweep is ~172,800
+  vCPU-s per environment per month, and a 5-min sweep (U2 as written) ~518,400 (DEPLOY-PLAN section 10, D1).
+- Decision: Cloud Scheduler sends `POST /internal/maintenance/sweep` and `POST /internal/maintenance/cleanup` to the
+  worker's run.app URL with an OIDC token (audience = worker URL). The endpoints sit on the internal router (same
+  `require_internal_auth`; the scheduler's service account is added to `INTERNAL_AUTH_ALLOWED_EMAILS`) and call
+  `app/services/maintenance.py`, the same code as the CLIs. 200 with counts on success; 503 `{"status": "retry"}` on
+  a database error, a failed re-enqueue or a failed R2 delete (details logged, never returned); 401 auth. Both are
+  idempotent, so a repeated or overlapping tick is harmless.
+- Billing: request-based on the worker service, inside the free tier at any cadence.
+- Migrations stay a Cloud Run Job (`imageopz-migrate-<env>`, session pooler). The CLIs stay for manual runs.
+- Route split: `SERVICE_ROLE` (`api` | `worker` | `all`, default `all`, unknown values fail validation). The api
+  service does not mount `/internal/*`; the worker mounts only `/internal/*` and health.
+- Consequence: a maintenance request occupies a worker instance (concurrency 1) for its duration. The jobs queue
+  keeps one instance free, so payments are not starved. If every instance is busy the tick fails and the next one
+  (5 min sweep / hourly cleanup, U2) is the retry.
+
 ## Rollback
-Revert the T-007 commits; Alembic 0006 downgrade drops both columns.
+Revert the T-007 commits; Alembic 0006 downgrade drops both columns. T-008b1 amendment: point the Scheduler jobs back
+at Cloud Run Jobs running the CLIs (T-008a scripts) and redeploy with `SERVICE_ROLE=all`.
 ## Validation
 T-007 AC1-AC7; `tests/test_job_processing.py`, `tests/test_job_processing_concurrency.py` (Postgres).
 ## Revisit triggers

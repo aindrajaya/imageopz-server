@@ -12,5 +12,8 @@ Read when you need a running API (tests need no running services).
   `/uploads/complete` then posts each job to the endpoint and waits until it is processed. Without `JOB_ENQUEUE_MODE`,
   `/complete` answers 503 QUEUE_UNAVAILABLE (fail closed).
 - Sweeper (expired uploads, stale PENDING re-enqueue, stuck PROCESSING): `python -m app.cli.sweep_uploads`.
-- Expired-output cleanup: `python -m app.cli.cleanup_expired`. Both CLIs are idempotent; scheduling is T-008.
+- Expired-output cleanup: `python -m app.cli.cleanup_expired`. Both CLIs are idempotent. Deployed, Cloud Scheduler calls the
+  same code on the worker: `POST /internal/maintenance/sweep` and `/cleanup` (internal auth; locally `X-Internal-Token`).
+- `SERVICE_ROLE` (default `all`): `api` mounts public routes only, `worker` only `/internal/*` and health; anything else fails at start.
+- Health: `/health` (liveness, no DB) and `/readyz` (DB check, 503 when down).
 - OpenAPI spec: `IMAGEOPZ_ENV_FILE="" python scripts/generate_openapi.py` regenerates `docs/openapi.json`.

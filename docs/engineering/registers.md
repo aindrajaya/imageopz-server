@@ -1,6 +1,6 @@
 # Registers
 
-Updated 2026-10-16 by Claude Code (task T-008a).
+Updated 2026-10-17 by Claude Code (task T-008b1).
 
 ## Incidents
 - 2026-10-15 - Malicious commits were pushed with the owner's credentials from an infected machine (blameless record).
@@ -23,6 +23,7 @@ Updated 2026-10-16 by Claude Code (task T-008a).
 | Date | Lesson | Rule |
 |---|---|---|
 | 2026-10-14 | VPS destroyed before a verified backup; the prod DB and `.env` were later recovered by the owner. | Before decommissioning a host, back up and verify a restore. Secrets live in Secret Manager, not host files. |
+| 2026-10-17 | T-008b1: a bare `alembic check` (no `-x url=`) resolved DATABASE_URL through app settings, which load the developer `.env`; the read-only check ran against an unknown database (most likely the local `imageopz.db`, "not up to date"). | Run Alembic only with `IMAGEOPZ_ENV_FILE=""` and `-x url=<throwaway db>` (rule in AGENTS.md). |
 | 2026-10-15 | fe7f405 carries an AI co-author trailer contrary to AGENTS.md; left in place (main history is protected). | Co-author attribution disabled in Claude Code settings. |
 
 ## Debt
@@ -39,6 +40,7 @@ Updated 2026-10-16 by Claude Code (task T-008a).
 | Id | Risk | Fix |
 |---|---|---|
 | S1 | A concurrent order_created and order_refunded for the same pre-existing order do not serialize on the dedupe key; the refund can read a stale order (no quota link) and leave the order "refunded" while Pro stays active. | Load the order with `.with_for_update()` in `app/services/payments.py:_apply` (or an advisory lock per order id). Add a Postgres test. |
+| U1 | ACCEPTED by the owner 2026-10-17 (DEPLOY-PLAN Q6): no presign rate limit at go-live. Rotating session ids yields free conversions and a longer jobs backlog; spend is bounded by 3 free credits per session, per-request limits, api max-instances 3, worker max-instances 1 and the jobs queue dispatch limits, R2 lifecycle (U3), budget alerts and the kill switch. | Revisit on abuse or the first billing report; limiter tracked as follow-up U1. |
 | S6 | Refunding one of several paid orders for the same user keeps Pro (another paid order backs it) but does not recompute expiry or the credit window from the remaining order. | Decide the rule with the owner (keep latest expiry vs recompute from remaining paid orders) in a payments follow-up task. |
 
 ## Follow-ups
@@ -46,8 +48,8 @@ Updated 2026-10-16 by Claude Code (task T-008a).
 |---|---|---|
 | S4 | Cache Google OIDC certs for internal auth (`app/utils/internal_auth.py` builds a fresh `google_requests.Request()` per call, fetching certs every time). Use a module-level Request with a cached session. | T-008 |
 | G1 | Go pool (8 conns) x Cloud Run instances must fit the Supabase pooler limit; set `--concurrency` and `--max-instances` accordingly. | T-008 |
-| U1 | Rate-limit `/uploads/presign` per IP (each new session id gets fresh free credits and object writes). | T-008 |
-| U2 | Schedule `python -m app.cli.sweep_uploads` every few minutes and `python -m app.cli.cleanup_expired` hourly (Cloud Scheduler -> Cloud Run Jobs). T-008a scripts: 15 min / 6 h for cost (D1); DEPLOY-PLAN Q1. | T-008 |
+| U1 | Rate-limit `/uploads/presign` per IP (each new session id gets fresh free credits and object writes). Risk accepted for go-live (Risks, Q6). | backlog |
+| U2 | Schedule the sweep every 5 min and cleanup hourly: Cloud Scheduler -> worker `/internal/maintenance/{sweep,cleanup}` (Q1; endpoints done in T-008b1, scripts in T-008b2). | T-008b2 |
 | U3 | R2 lifecycle rule on `imageopz-uploads` (`uploads/` older than 1 day) as the backstop for best-effort deletes; owner verifies in Cloudflare. | T-008 |
 | U4 | Pillow's own limit (89.5 MP warning, 179 MP error) is below MAX_IMAGE_PIXELS (250 MP), so the effective limit is ~179 MP at `/complete` and in the worker (pre-existing). Decide and set `Image.MAX_IMAGE_PIXELS` deliberately. | backlog |
 | U5 | `/complete` reads 64 KiB (D3): a JPEG with >64 KiB of metadata before the frame header (e.g. a 200 KB ICC profile) is rejected `invalid_image`. Option: second ranged read up to 1 MiB. | T-006c feedback |
@@ -69,9 +71,11 @@ Updated 2026-10-16 by Claude Code (task T-008a).
 | J6 | A late worker that lost its claim may still upload `optimized/{job_id}.avif` for a job the sweeper FAILed; cleanup only selects DONE jobs, so the object is orphaned. | backlog |
 | J7 | Legacy PROCESSING rows with `processing_started_at IS NULL` are neither reclaimed nor swept (none expected: production DB starts empty). | backlog |
 | J8 | `docs/PRD-backend.v3.md` ("latest spec") still describes the Redis BLPOP queue; ADR-005 supersedes it. | docs |
-| H1 | `/health` answers 200 with `status: "degraded: <exception text>"` on a DB error (`app/routes/health.py`): leaks error text and never fails a probe. Return a generic body (and decide 503). | T-008b |
-| C1 | Session cookie `secure` only when `ENVIRONMENT=production` (`app/routes/session.py`, `app/services/quota_context.py`); staging is HTTPS too. | T-008b |
-| D1 | Cloud Run Jobs bill instance time with a 1-minute minimum per execution: a 5-min sweep is ~518k vCPU-s per env per month (over budget). Option: Scheduler -> worker `/internal/maintenance/*` endpoints (DEPLOY-PLAN Q1, ADR-005 amendment). | T-008b |
+| H1 | CLOSED 2026-10-17 (T-008b1): `/health` is liveness with a generic body (no DB, no error text); `/readyz` checks the DB and answers 503 `{"status": "unavailable"}`; `tests/test_health.py`. | - |
+| C1 | CLOSED 2026-10-17 (T-008b1): session cookie `Secure` in every ENVIRONMENT except development (`Settings.session_cookie_secure`); `tests/test_session_cookie_secure.py`. | - |
+| D1 | CLOSED 2026-10-17 (T-008b1): Scheduler -> worker `POST /internal/maintenance/{sweep,cleanup}` (Q1, ADR-005 amendment); `tests/test_maintenance_endpoints.py`. | - |
+| UI1 | imageopz-ui `logoutSession` (`lib/imageopzApi.ts`) always sends `credentials: "include"`, ignoring `VITE_IMAGEOPZ_SEND_COOKIES`; with `CORS_ALLOW_CREDENTIALS=false` the browser would block the logout response. Keep credentials on in CORS until fixed. | T-008b3 (UI) |
+| R1 | Unverified: whether Google's front end serves paths ending in `z` (`/readyz`) on run.app from outside. Check in staging; probes reach the container directly. | T-008b2 staging |
 | U13 | A Pro renewal resets `pro_credits_used`; a reservation made before and released after decrements credits spent after the renewal (floor at 0 only). Decide with S6. | payments follow-up |
 
 ## Protected behaviors
@@ -86,6 +90,9 @@ Updated 2026-10-16 by Claude Code (task T-008a).
 | A job is processed at most once per claim; duplicate/concurrent deliveries never overwrite DONE; reclaim only after the lease | `tests/test_job_processing.py`, `tests/test_job_processing_concurrency.py` (Postgres) |
 | `/internal/jobs/process`: 2xx for terminal outcomes, 503 for retriable ones and live leases, no exception text; enqueue fails closed without `JOB_ENQUEUE_MODE` | `tests/test_job_processing.py` |
 | `/internal/*` routes are absent from the public OpenAPI schema | `tests/test_openapi_schema.py` |
+| `SERVICE_ROLE=api` never routes `/internal/*`; `worker` serves only `/internal/*` and health; unknown roles fail validation; committed `docs/openapi.json` matches the app | `tests/test_service_roles.py` |
+| Maintenance endpoints: 401 in every auth failure with no state change; 200 with counts; 503 generic; idempotent | `tests/test_maintenance_endpoints.py` |
+| Anonymous flow works with `X-Session-Id` and no cookie (Q2-B) | `tests/test_header_only_session.py` |
 | Tests never load `.env` or reach external hosts | `tests/conftest.py` guard, `tests/test_network_guard.py` |
 
 ## T-008 checklist
