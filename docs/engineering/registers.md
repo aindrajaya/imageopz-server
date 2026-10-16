@@ -58,6 +58,7 @@ Updated 2026-10-15 by Claude Code (task T-006b2).
 | U12 | CLOSED 2026-10-15: the legacy multipart endpoint (read-then-write credit counters) was removed in T-006b2. | - |
 | U14 | CLOSED 2026-10-15 (T-006b2): without outputs storage the worker marks the job FAILED, never DONE; `test_worker_fails_job_when_outputs_store_is_not_configured`. | - |
 | U15 | The outputs token (R2_ACCESS_KEY_ID) is account-wide: ListBuckets 200 and it can write `imageopz-uploads`. Replace it with a token scoped to `imageopz` only, revoke the old one, re-run the scope check. | before T-008 |
+| A1 | Decide whether `/docs`, `/redoc` and `/openapi.json` are served in production (FastAPI serves them by default; `/internal/*` is already excluded from the schema). | T-008 |
 | U13 | A Pro renewal resets `pro_credits_used`; a reservation made before and released after decrements credits spent after the renewal (floor at 0 only). Decide with S6. | payments follow-up |
 
 ## Protected behaviors
@@ -69,6 +70,7 @@ Updated 2026-10-15 by Claude Code (task T-006b2).
 | `jobs.status` stored as member name (`PENDING`, ...) | `tests/test_job_status_storage.py`, `tests/test_uploads_presign.py` (UPLOADING, REJECTED) |
 | Upload credits reserved atomically and released exactly once (reject, sweeper, repeats) | `tests/test_uploads_*.py`, `tests/test_upload_worker_and_sweeper.py`, `tests/test_uploads_concurrency.py` (Postgres) |
 | Worker never marks a job DONE without an uploaded result (U14) | `tests/test_upload_worker_and_sweeper.py` |
+| `/internal/*` routes are absent from the public OpenAPI schema | `tests/test_openapi_schema.py` |
 | Tests never load `.env` or reach external hosts | `tests/conftest.py` guard, `tests/test_network_guard.py` |
 
 ## T-008 checklist
@@ -77,4 +79,5 @@ Updated 2026-10-15 by Claude Code (task T-006b2).
 - Owner verifies in the Supabase dashboard that the Data API does not expose the `payments` schema (only `public` should be exposed).
 - G1: size the Go pool (8) x Cloud Run instances against the Supabase pooler limit; set `--concurrency` and `--max-instances`.
 - S4: cache Google OIDC certs in `app/utils/internal_auth.py`.
+- A1: decide whether `/docs`, `/redoc` and `/openapi.json` are served in production.
 - Ingress and API OIDC settings (audience, allowed emails), queue and service accounts, Secret Manager, LemonSqueezy webhook URL switch (see tasks/T-005-payments-go-ingress.md).

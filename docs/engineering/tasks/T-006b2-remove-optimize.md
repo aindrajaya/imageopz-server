@@ -59,6 +59,17 @@ The three files were deleted; `tests/test_smoke.py` keeps `test_health_smoke` (i
 ## Follow-ups
 None new. Closed: U7 (this task), U12 (endpoint removed), U14 (fixed).
 
+## Amendment (2026-10-16): internal endpoints out of the public schema
+- Commit 1 regenerated `docs/openapi.json`, which then listed `POST /internal/payments/events`.
+- `app/routes/internal.py`: the `/internal` router is created with `include_in_schema=False`, so every current and
+  future `/internal/*` route is excluded; routing and auth are unchanged.
+- Test first: `tests/test_openapi_schema.py::test_internal_endpoints_are_not_in_the_public_schema` failed with
+  `['/internal/payments/events']`, passes after the change.
+- `docs/openapi.json` regenerated the same way (`IMAGEOPZ_ENV_FILE=""`, REDIS_URL on a closed local port); no `/internal` path in it.
+- Suites: SQLite 108 passed, 9 skipped; Postgres 16.15 117 passed (+1 new test). Throwaway cluster deleted.
+- Follow-up A1 (T-008): decide whether `/docs`, `/redoc` and `/openapi.json` are served in production.
+- Second local commit: `fix(api): exclude internal endpoints from the public OpenAPI schema`.
+
 ## Owner commands (not run)
 git push -u origin chore/remove-optimize
 gh pr create --fill --base main

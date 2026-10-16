@@ -1,6 +1,6 @@
 ---
 project: imageopz-server
-updated: 2026-10-15 by Claude Code (T-006b2, pending merge)
+updated: 2026-10-16 by Claude Code (T-006b2 amendment, pending merge)
 ---
 
 # STATE - ImageOpz
@@ -11,7 +11,7 @@ before applying to Sticker Mule on Mon 19 Oct 2026.
 
 ## Accepted baseline
 - `main` @ `1dc3d67` (PR #15). SQLite 110 passed/9 skipped; Postgres 16.15 (Homebrew) 119 passed; `alembic heads` = 0004.
-- Branch `chore/remove-optimize` (T-006b2, local commit, not pushed): SQLite 107 passed/9 skipped; Postgres 116 passed; `alembic heads` = 0005. CI checks: `pytest (sqlite)`, `pytest (postgres)`; payments-go workflow is path-filtered.
+- Branch `chore/remove-optimize` (T-006b2, two local commits, not pushed): SQLite 108 passed/9 skipped; Postgres 117 passed; `alembic heads` = 0005. CI checks: `pytest (sqlite)`, `pytest (postgres)`; payments-go workflow is path-filtered.
 - Deployed: none; ImageOpz offline. The migrations have never run against Supabase.
 - Env: Python 3.11 venv `~/.venvs/imageopz` (rebuilt by the owner, libmagic installed); no Docker; throwaway Postgres from Postgres.app or Homebrew (runbooks/local-postgres.md).
 
@@ -64,7 +64,7 @@ users/users_quota/orders. Squash merges. Uploads use their own R2 token (no fall
 ## Top risks / blockers
 - Rate limiting lost without Nginx (presign now included, U1); X-Forwarded-For trust (`app/utils/security.py:IpFingerprint`); Supabase Free pauses after 1 week inactivity / 500 MB.
 - Go ingress, Cloud Tasks and OIDC never exercised against GCP; docker build only proven in CI.
-- Open follow-ups S1, S6, G1, S4, U1-U5, U8-U11, U13, U15 in registers.md.
+- Open follow-ups S1, S6, G1, S4, A1, U1-U5, U8-U11, U13, U15 in registers.md.
 - Never run install/dev/build/test on uninspected commits, or on UI commits before fd1032e; tests never load .env or reach external hosts (AGENTS.md).
 
 ## Standing authorization
