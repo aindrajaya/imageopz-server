@@ -1,0 +1,17 @@
+[
+  {
+    "name": "delete-older-than-30d",
+    "action": {"type": "Delete"},
+    "condition": {"tagState": "any", "olderThan": "30d"}
+  },
+  {
+    "name": "keep-5-most-recent",
+    "action": {"type": "Keep"},
+    "mostRecentVersions": {"keepCount": 5}
+  },
+  {
+    "name": "keep-prod-releases",
+    "action": {"type": "Keep"},
+    "condition": {"tagState": "tagged", "tagPrefixes": ["prod-"]}
+  }
+]
