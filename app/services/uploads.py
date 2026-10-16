@@ -89,8 +89,9 @@ def reject_upload(db: Session, job: Job, reason: str, now: datetime) -> bool:
     return True
 
 
-def accept_upload(db: Session, job_id: str) -> bool:
-    return _transition(db, job_id, JobStatus.UPLOADING, status=JobStatus.PENDING)
+def accept_upload(db: Session, job_id: str, now: datetime) -> bool:
+    """UPLOADING -> PENDING; enqueued_at starts the stale-PENDING clock of the sweeper (U8)."""
+    return _transition(db, job_id, JobStatus.UPLOADING, status=JobStatus.PENDING, enqueued_at=now)
 
 
 def revert_to_uploading(db: Session, job_id: str) -> bool:

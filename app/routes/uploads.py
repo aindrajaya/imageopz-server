@@ -10,6 +10,7 @@ import logging
 import uuid
 
 from fastapi import APIRouter, Depends, Header, Request, Response, status
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
@@ -24,12 +25,11 @@ from app.schemas import (
     PresignRequest,
     PresignResponse,
 )
-from app.services import upload_store, uploads
+from app.services import job_enqueuer, upload_store, uploads
 from app.services.quota_context import activation_pending_response, resolve_quota_context, set_session_cookie
 from app.utils.auth_deps import get_optional_supabase_identity
 from app.utils.security import QuotaManager, SecurityValidator
 from app.utils.supabase_auth import SupabaseIdentity
-from app.workers.job_worker import job_queue
 
 router = APIRouter(prefix="/api/v1/uploads", tags=["uploads"])
 logger = logging.getLogger("imageopz.routes.uploads")
@@ -230,14 +230,16 @@ async def complete_uploads(
     accepted, rejected_keys = [], []
     for jid, reason in sorted(verdicts.items()):  # job-id lock order, same as the sweeper
         if reason is None:
-            if uploads.accept_upload(db_session, jid):
+            if uploads.accept_upload(db_session, jid, now):
                 accepted.append(jid)
         elif uploads.reject_upload(db_session, jobs[jid], reason, now):
             rejected_keys.append(jobs[jid].source_object_key)
     db_session.commit()
 
     # Commit before enqueue (issues/RACE_CONDITION_FIX.md); jobs that fail to enqueue go back to UPLOADING.
-    not_enqueued = [jid for jid in accepted if not job_queue.enqueue_job(jid)]
+    # The enqueuer blocks (gRPC or HTTP), so it runs off the event loop.
+    enqueuer = job_enqueuer.get_enqueuer()
+    not_enqueued = [jid for jid in accepted if not await run_in_threadpool(enqueuer.enqueue, jid)]
     if not_enqueued:
         for jid in not_enqueued:
             uploads.revert_to_uploading(db_session, jid)

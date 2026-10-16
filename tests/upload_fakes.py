@@ -51,3 +51,17 @@ class FakeUploadStore:
     def delete(self, key: str) -> None:
         self.deleted.append(key)
         self.objects.pop(key, None)
+
+
+class FakeEnqueuer:
+    """Records enqueue calls; `accept(job_id) -> bool` decides success (no network)."""
+
+    def __init__(self, accept=None) -> None:
+        self.calls: List[str] = []
+        self.attempts: List[Tuple[str, int]] = []
+        self.accept = accept or (lambda job_id: True)
+
+    def enqueue(self, job_id: str, attempt: int = 0) -> bool:
+        self.calls.append(job_id)
+        self.attempts.append((job_id, attempt))
+        return self.accept(job_id)

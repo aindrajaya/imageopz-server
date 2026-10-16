@@ -235,6 +235,10 @@ class Job(Base):
     processing_started_at = Column(DateTime, nullable=True)
     processing_finished_at = Column(DateTime, nullable=True)
     processing_duration_ms = Column(Integer, nullable=True)
+
+    # Queueing (ADR-005): when the job last went to the queue, and how many deliberate re-enqueues (task "-r<n>")
+    enqueued_at = Column(DateTime, nullable=True)
+    enqueue_attempts = Column(Integer, nullable=False, default=0, server_default="0")
     
     # Metadata
     created_at = Column(DateTime, default=datetime.utcnow, index=True)

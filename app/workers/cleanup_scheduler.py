@@ -6,10 +6,8 @@ Uses APScheduler for cron-based task scheduling.
 import logging
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
-from datetime import datetime
-from sqlalchemy.orm import Session
-
-from app.models import Job, JobStatus, db
+from app.models import db
+from app.services.output_cleanup import cleanup_expired_outputs
 from app.services.image_service import r2_storage
 from app.config import settings
 
@@ -63,48 +61,14 @@ class CleanupScheduler:
     
     @staticmethod
     def cleanup_expired_files():
-        """
-        Remove expired files from R2 and database.
-        Runs on schedule to free up storage.
-        """
+        """Remove expired files from R2 and database (app/services/output_cleanup.py)."""
         try:
             db_session = db.get_session()
-            
-            # Find all expired jobs that haven't been deleted
-            expired_jobs = db_session.query(Job).filter(
-                Job.expiry_date <= datetime.utcnow(),
-                Job.deleted_at == None,
-                Job.status == JobStatus.DONE
-            ).all()
-            
-            deleted_count = 0
-            failed_count = 0
-            
-            for job in expired_jobs:
-                try:
-                    # Delete from R2
-                    if job.r2_object_key and r2_storage:
-                        if not r2_storage.delete_optimized_image(job.r2_object_key):
-                            logger.warning("Failed to delete %s from R2", job.r2_object_key)
-                            failed_count += 1
-                            continue
-                    
-                    # Mark as deleted in database
-                    job.deleted_at = datetime.utcnow()
-                    job.r2_url = None  # Clear URL
-                    db_session.add(job)
-                    deleted_count += 1
-                
-                except Exception as e:
-                    logger.exception("Error cleaning up job %s", job.id)
-                    failed_count += 1
-            
-            db_session.commit()
-            db_session.close()
-            
-            logger.info("Cleanup completed: %s deleted, %s failed", deleted_count, failed_count)
-        
-        except Exception as e:
+            try:
+                cleanup_expired_outputs(db_session, r2_storage)
+            finally:
+                db_session.close()
+        except Exception:
             logger.exception("Critical error in cleanup job")
 
 
