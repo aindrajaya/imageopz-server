@@ -1,6 +1,6 @@
 # Registers
 
-Updated 2026-10-16 by Claude Code (task T-007).
+Updated 2026-10-16 by Claude Code (task T-008a).
 
 ## Incidents
 - 2026-10-15 - Malicious commits were pushed with the owner's credentials from an infected machine (blameless record).
@@ -47,7 +47,7 @@ Updated 2026-10-16 by Claude Code (task T-007).
 | S4 | Cache Google OIDC certs for internal auth (`app/utils/internal_auth.py` builds a fresh `google_requests.Request()` per call, fetching certs every time). Use a module-level Request with a cached session. | T-008 |
 | G1 | Go pool (8 conns) x Cloud Run instances must fit the Supabase pooler limit; set `--concurrency` and `--max-instances` accordingly. | T-008 |
 | U1 | Rate-limit `/uploads/presign` per IP (each new session id gets fresh free credits and object writes). | T-008 |
-| U2 | Schedule `python -m app.cli.sweep_uploads` every few minutes and `python -m app.cli.cleanup_expired` hourly (Cloud Scheduler -> Cloud Run Jobs). | T-008 |
+| U2 | Schedule `python -m app.cli.sweep_uploads` every few minutes and `python -m app.cli.cleanup_expired` hourly (Cloud Scheduler -> Cloud Run Jobs). T-008a scripts: 15 min / 6 h for cost (D1); DEPLOY-PLAN Q1. | T-008 |
 | U3 | R2 lifecycle rule on `imageopz-uploads` (`uploads/` older than 1 day) as the backstop for best-effort deletes; owner verifies in Cloudflare. | T-008 |
 | U4 | Pillow's own limit (89.5 MP warning, 179 MP error) is below MAX_IMAGE_PIXELS (250 MP), so the effective limit is ~179 MP at `/complete` and in the worker (pre-existing). Decide and set `Image.MAX_IMAGE_PIXELS` deliberately. | backlog |
 | U5 | `/complete` reads 64 KiB (D3): a JPEG with >64 KiB of metadata before the frame header (e.g. a 200 KB ICC profile) is rejected `invalid_image`. Option: second ranged read up to 1 MiB. | T-006c feedback |
@@ -69,6 +69,9 @@ Updated 2026-10-16 by Claude Code (task T-007).
 | J6 | A late worker that lost its claim may still upload `optimized/{job_id}.avif` for a job the sweeper FAILed; cleanup only selects DONE jobs, so the object is orphaned. | backlog |
 | J7 | Legacy PROCESSING rows with `processing_started_at IS NULL` are neither reclaimed nor swept (none expected: production DB starts empty). | backlog |
 | J8 | `docs/PRD-backend.v3.md` ("latest spec") still describes the Redis BLPOP queue; ADR-005 supersedes it. | docs |
+| H1 | `/health` answers 200 with `status: "degraded: <exception text>"` on a DB error (`app/routes/health.py`): leaks error text and never fails a probe. Return a generic body (and decide 503). | T-008b |
+| C1 | Session cookie `secure` only when `ENVIRONMENT=production` (`app/routes/session.py`, `app/services/quota_context.py`); staging is HTTPS too. | T-008b |
+| D1 | Cloud Run Jobs bill instance time with a 1-minute minimum per execution: a 5-min sweep is ~518k vCPU-s per env per month (over budget). Option: Scheduler -> worker `/internal/maintenance/*` endpoints (DEPLOY-PLAN Q1, ADR-005 amendment). | T-008b |
 | U13 | A Pro renewal resets `pro_credits_used`; a reservation made before and released after decrements credits spent after the renewal (floor at 0 only). Decide with S6. | payments follow-up |
 
 ## Protected behaviors
@@ -86,6 +89,7 @@ Updated 2026-10-16 by Claude Code (task T-007).
 | Tests never load `.env` or reach external hosts | `tests/conftest.py` guard, `tests/test_network_guard.py` |
 
 ## T-008 checklist
+Plan, names and go-live blockers: deploy/DEPLOY-PLAN.md (T-008a); scripts: deploy/gcloud/. The items below are consolidated there.
 - Region: asia-northeast1 for Cloud Run services, Cloud Run Jobs and the Cloud Tasks queue (ADR-002 amendment).
 - Run `alembic upgrade head` as a Cloud Run Job through the Supabase session pooler (5432), as the table-owner role.
 - Owner verifies in the Supabase dashboard that the Data API does not expose the `payments` schema (only `public` should be exposed).
