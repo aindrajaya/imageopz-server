@@ -11,7 +11,7 @@ before applying to Sticker Mule on Mon 19 Oct 2026.
 
 ## Accepted baseline
 - `main` @ `4ee31e5` (PR #16, T-006b2). SQLite 108 passed/9 skipped; Postgres 16.15 (Homebrew) 117 passed; `alembic heads` = 0005 (verified 2026-10-16 at T-007 start). CI checks: `pytest (sqlite)`, `pytest (postgres)`; payments-go workflow is path-filtered.
-- Branch `feat/cloud-tasks-worker` (T-007, three local commits, not pushed): SQLite 128 passed/12 skipped; Postgres 16.15 140 passed; `alembic heads` = 0006.
+- Branch `feat/cloud-tasks-worker` (T-007, four local commits incl. the J3 amendment, not pushed): SQLite 130 passed/13 skipped; Postgres 16.15 143 passed; `alembic heads` = 0006.
 - imageopz-ui: T-006c merged as PR #3 (`b509117`), followed by an svg fix PR (REPORTED by the owner; number and SHA not recorded here).
 - Deployed: none; ImageOpz offline. The migrations have never run against Supabase.
 - Env: Python 3.11 venv `~/.venvs/imageopz` (rebuilt by the owner, libmagic installed); no Docker; throwaway Postgres from Postgres.app or Homebrew (runbooks/local-postgres.md).
@@ -64,7 +64,7 @@ users/users_quota/orders. Squash merges. Uploads use their own R2 token (no fall
 ## Top risks / blockers
 - Rate limiting lost without Nginx (presign now included, U1); X-Forwarded-For trust (`app/utils/security.py:IpFingerprint`); Supabase Free pauses after 1 week inactivity / 500 MB.
 - Go ingress, Cloud Tasks (both enqueuers) and OIDC never exercised against GCP; docker build only proven in CI.
-- Open follow-ups S1, S6, G1, S4, A1, U1-U5, U9-U11, U13, U15, J1-J8 in registers.md.
+- Open follow-ups S1, S6, G1, S4, A1, U1-U5, U9-U11, U13, U15, J1, J2, J4-J8 in registers.md.
 - Never run install/dev/build/test on uninspected commits, or on UI commits before fd1032e; tests never load .env or reach external hosts (AGENTS.md).
 
 ## Standing authorization

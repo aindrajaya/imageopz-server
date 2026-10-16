@@ -272,15 +272,37 @@ def test_process_endpoint_database_error_is_503_with_generic_body(client, fake_s
     assert res.status_code == 503 and "secret-host" not in res.text
 
 
-def test_lease_blocks_redelivery_until_it_expires(client, fake_store, internal, output):
-    fresh = _uploaded_job(fake_store, status="PROCESSING", processing_started_at=datetime.utcnow() - timedelta(seconds=60))
-    expired = _uploaded_job(fake_store, status="PROCESSING", processing_started_at=datetime.utcnow() - timedelta(seconds=1801))
+def test_delivery_during_a_live_lease_is_retriable_and_changes_nothing(client, fake_store, internal, output):
+    # J3: a redelivery after a crash must keep retrying until the lease expires, not be acknowledged.
+    started = datetime.utcnow() - timedelta(seconds=60)
+    job_id = _uploaded_job(fake_store, status="PROCESSING", processing_started_at=started)
 
-    assert _deliver(client, fresh).json() == {"status": "skipped"}
-    assert _job(fresh).status.name == "PROCESSING" and output.uploaded == []
+    res = _deliver(client, job_id)
+    assert (res.status_code, res.json()) == (503, {"status": "retry"})
+    job = _job(job_id)
+    assert (job.status.name, job.processing_started_at, job.processing_error) == ("PROCESSING", started, None)
+    assert output.uploaded == [] and fake_store.deleted == []
 
-    assert _deliver(client, expired).json() == {"status": "done"}
-    assert _job(expired).status.name == "DONE" and output.uploaded == [expired]
+
+def test_delivery_after_lease_expiry_reclaims_and_processes_once(client, fake_store, internal, output):
+    job_id = _uploaded_job(fake_store, status="PROCESSING", processing_started_at=datetime.utcnow() - timedelta(seconds=1801))
+
+    assert _deliver(client, job_id).json() == {"status": "done"}
+    assert _deliver(client, job_id).json() == {"status": "skipped"}
+    assert _job(job_id).status.name == "DONE" and output.uploaded == [job_id]
+
+
+def test_delivery_after_a_terminal_status_is_a_2xx_noop(client, fake_store, internal, output):
+    done = _uploaded_job(fake_store)
+    assert _deliver(client, done).json() == {"status": "done"}
+    failed = _add_job(status="FAILED")
+    rejected = _add_job(status="REJECTED")
+
+    for job_id, status in ((done, "DONE"), (failed, "FAILED"), (rejected, "REJECTED")):
+        res = _deliver(client, job_id)
+        assert (res.status_code, res.json()) == (200, {"status": "skipped"})
+        assert _job(job_id).status.name == status
+    assert output.uploaded == [done]
 
 
 def test_finish_without_the_current_claim_never_overwrites(client, fake_store, output):

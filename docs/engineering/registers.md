@@ -63,7 +63,7 @@ Updated 2026-10-16 by Claude Code (task T-007).
 | A1 | Decide whether `/docs`, `/redoc` and `/openapi.json` are served in production (FastAPI serves them by default; `/internal/*` is already excluded from the schema). | T-008 |
 | J1 | Refund policy for jobs FAILED by the worker or the sweeper ("not queued", "did not finish", bad image): the credit stays spent, as before T-007. Decide whether infrastructure failures release the credit. | payments follow-up |
 | J2 | `cleanup_expired` (same logic as the old scheduler job) marks an expired job deleted without deleting its R2 object when the outputs client is not configured; the object is orphaned. Pre-existing. Skip or fail instead. | T-008 |
-| J3 | A delivery that dies mid-job (OOM) is redelivered into a live lease and acknowledged; the job waits up to 2x the lease (60 min) for the sweeper to FAIL it (ADR-005). Options: 503 while leased, or the sweeper re-enqueues PROCESSING jobs past 1x the lease (`-r<n>`) and FAILs at 2x (T-007 review finding 4). | backlog |
+| J3 | RESOLVED 2026-10-16 (T-007 amendment): a delivery during a live lease answers 503, so Cloud Tasks retries until the job finishes or the lease expires and the retry reclaims it; needs the queue retry config below (ADR-005). `tests/test_job_processing.py`, `tests/test_job_processing_concurrency.py`. | - |
 | J4 | Worker `processing_error` embeds exception text ("Unexpected error: {e}", "Metadata stripping failed: {e}") and reaches clients as `error_message`; same as U11, now also for sweeper/worker paths. | backlog |
 | J5 | The internal endpoint answers 503 to any unexpected exception (including bugs), retried up to the queue's `max_attempts`; add a log-based alert. | T-008 |
 | J6 | A late worker that lost its claim may still upload `optimized/{job_id}.avif` for a job the sweeper FAILed; cleanup only selects DONE jobs, so the object is orphaned. | backlog |
@@ -81,7 +81,7 @@ Updated 2026-10-16 by Claude Code (task T-007).
 | Upload credits reserved atomically and released exactly once (reject, sweeper, repeats) | `tests/test_uploads_*.py`, `tests/test_upload_worker_and_sweeper.py`, `tests/test_uploads_concurrency.py` (Postgres) |
 | Worker never marks a job DONE without an uploaded result (U14) | `tests/test_upload_worker_and_sweeper.py` |
 | A job is processed at most once per claim; duplicate/concurrent deliveries never overwrite DONE; reclaim only after the lease | `tests/test_job_processing.py`, `tests/test_job_processing_concurrency.py` (Postgres) |
-| `/internal/jobs/process`: 2xx for terminal outcomes, 503 only for retriable ones, no exception text; enqueue fails closed without `JOB_ENQUEUE_MODE` | `tests/test_job_processing.py` |
+| `/internal/jobs/process`: 2xx for terminal outcomes, 503 for retriable ones and live leases, no exception text; enqueue fails closed without `JOB_ENQUEUE_MODE` | `tests/test_job_processing.py` |
 | `/internal/*` routes are absent from the public OpenAPI schema | `tests/test_openapi_schema.py` |
 | Tests never load `.env` or reach external hosts | `tests/conftest.py` guard, `tests/test_network_guard.py` |
 
@@ -94,3 +94,4 @@ Updated 2026-10-16 by Claude Code (task T-007).
 - A1: decide whether `/docs`, `/redoc` and `/openapi.json` are served in production.
 - Ingress and API OIDC settings (audience, allowed emails), queue and service accounts, Secret Manager, LemonSqueezy webhook URL switch (see tasks/T-005-payments-go-ingress.md).
 - T-007 jobs (ADR-005, tasks/T-007-cloud-tasks-worker.md "T-008 list"): jobs queue, enqueuer and invoker service accounts, `run.invoker` on the worker, Cloud Scheduler for both CLIs, worker concurrency 1, memory sizing, request timeout 1800 s.
+- Jobs queue retry config must reach beyond JOB_LEASE_SECONDS (1800): `max_retry_duration` >= 2 h, `min_backoff` 30 s, `max_backoff` 600 s, `max_attempts` bounded (ADR-005, J3).
