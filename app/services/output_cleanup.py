@@ -1,6 +1,6 @@
 """
 Expired-output cleanup: DONE jobs past expiry_date lose their R2 object and URL and get deleted_at.
-Same logic as the former APScheduler job; entry point `python -m app.cli.cleanup_expired` (scheduled by T-008).
+Same logic as the former in-process scheduled job; entry point `python -m app.cli.cleanup_expired` (scheduled by T-008).
 Idempotent: a cleaned job has deleted_at set and is not selected again; a failed R2 delete is retried next run.
 """
 

@@ -1,6 +1,6 @@
 """
 FastAPI application factory and startup/shutdown logic.
-Initializes database, scheduler, workers, and API routes.
+Initializes the database and API routes; jobs run via POST /internal/jobs/process (ADR-005).
 """
 
 from fastapi import FastAPI

@@ -6,13 +6,6 @@ from datetime import datetime, timedelta
 from tests.upload_fakes import png_bytes
 
 
-class _Queue:
-    redis_client = None
-
-    def set_job_progress(self, *args, **kwargs):
-        pass
-
-
 class _Output:
     def __init__(self):
         self.uploaded = []
@@ -67,7 +60,7 @@ def _run_worker(job_id, store, monkeypatch, created_tmp):
     monkeypatch.setattr(job_worker.tempfile, "mkstemp", recording_mkstemp)
     s = db.get_session()
     try:
-        ok = job_worker.JobWorker(s, queue=_Queue(), store=store).process_job(job_id)
+        ok = job_worker.JobWorker(s, store=store).process_job(job_id)
     finally:
         s.close()
     return ok, output
@@ -243,7 +236,7 @@ def test_worker_fails_job_when_outputs_store_is_not_configured(client, fake_stor
 
     s = db.get_session()
     try:
-        ok = job_worker.JobWorker(s, queue=_Queue(), store=fake_store).process_job(job_id)
+        ok = job_worker.JobWorker(s, store=fake_store).process_job(job_id)
     finally:
         s.close()
 

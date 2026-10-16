@@ -41,9 +41,9 @@ class JobStatusResponse(BaseModel):
     # Download info (available when status is 'done')
     r2_url: Optional[str] = Field(None, description="Cloudflare R2 download URL")
 
-    # Optional realtime progress (when Redis available)
-    progress: Optional[float] = Field(None, description="Progress percentage (0-100)")
-    progress_status: Optional[str] = Field(None, description="Progress status message")
+    # Kept for response compatibility; always null since the queue-side progress store was removed (T-007)
+    progress: Optional[float] = Field(None, description="Deprecated, always null")
+    progress_status: Optional[str] = Field(None, description="Deprecated, always null")
     
     # Error handling
     error_message: Optional[str] = Field(None, description="Error details if status is 'failed'")
