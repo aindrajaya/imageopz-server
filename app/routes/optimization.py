@@ -1,20 +1,18 @@
 """
 API routes for image optimization endpoints.
-Handles bulk uploads, job status polling, and webhook processing.
+Handles checkout, job status polling, and webhook processing.
 """
 
-from fastapi import APIRouter, HTTPException, status, Request, Response, UploadFile, File, Form, Depends, Header
+from fastapi import APIRouter, HTTPException, status, Request, Response, Depends, Header
 from sqlalchemy.orm import Session
-from typing import List, Optional
+from typing import Optional
 from datetime import datetime, timedelta
 import uuid
-import os
 import logging
 import httpx
 
 from app.models import (
     Job,
-    JobStatus,
     UsersQuota,
     User,
     Order,
@@ -25,9 +23,6 @@ from app.models import (
     get_db,
 )
 from app.schemas import (
-    BulkOptimizeRequest,
-    BulkOptimizeResponse,
-    OptimizationResultResponse,
     JobStatusResponse,
     ErrorResponse,
     LemonSqueezyWebhookPayload,
@@ -35,17 +30,13 @@ from app.schemas import (
     LemonSqueezyCreateCheckoutResponse,
 )
 from app.utils.security import (
-    SecurityValidator,
-    QuotaManager,
     IpFingerprint,
     JWTHandler,
     WebhookValidator
 )
 from app.utils.auth_deps import get_optional_supabase_identity
 from app.services.quota_context import (
-    activation_pending_response,
     mask_email as _mask_email,
-    resolve_quota_context,
     set_session_cookie as _set_session_cookie,
 )
 from app.utils.supabase_auth import SupabaseIdentity
@@ -55,292 +46,6 @@ from app.config import settings
 
 router = APIRouter(prefix="/api/v1", tags=["optimization"])
 logger = logging.getLogger("imageopz.routes.optimization")
-
-
-# ============= Optimize Endpoint =============
-
-@router.post(
-    "/optimize",
-    response_model=BulkOptimizeResponse,
-    status_code=status.HTTP_202_ACCEPTED,
-    responses={
-        202: {"description": "Images queued for optimization"},
-        400: {"model": ErrorResponse, "description": "Invalid request"},
-        413: {"model": ErrorResponse, "description": "File too large"},
-        429: {"model": ErrorResponse, "description": "Quota exceeded"},
-    }
-)
-async def optimize_images(
-    request: Request,
-    response: Response,
-    images: List[UploadFile] = File(...),
-    auth_token: Optional[str] = Form(None),
-    session_id_header: Optional[str] = Header(None, alias="X-Session-Id"),
-    session_id_form: Optional[str] = Form(None),
-    identity: Optional[SupabaseIdentity] = Depends(get_optional_supabase_identity),
-    db_session: Session = Depends(get_db)
-):
-    """
-    Optimize multiple images and queue for processing.
-    Supports both free and pro tier with respective quotas.
-    
-    **Free Tier:**
-    - Max 3 images per request
-    - Max 10MB per image
-    - Max 3 credits total
-    - 7 day expiry
-    
-    **Pro Tier:**
-    - Max 30 images per request
-    - Max 50MB per image
-    - Unlimited credits (with active subscription)
-    - 40 day expiry
-    """
-    try:
-        os.makedirs(settings.upload_dir, exist_ok=True)
-
-        ctx = resolve_quota_context(
-            request=request,
-            response=response,
-            db_session=db_session,
-            identity=identity,
-            session_id_header=session_id_header,
-            session_id_form=session_id_form,
-            auth_token=auth_token,
-        )
-        session_id, ip_hash = ctx.session_id, ctx.ip_hash
-        user_quota, effective_is_pro = ctx.user_quota, ctx.effective_is_pro
-
-        # For Pro tier, enforce credit cap (e.g. 100) across the pro window.
-        pro_credits_used = int(getattr(user_quota, "pro_credits_used", 0) or 0)
-
-        # If user likely just completed checkout but webhook hasn't activated Pro yet, return retryable signal.
-        pending = activation_pending_response(db_session, ctx, identity, len(images))
-        if pending is not None:
-            return pending
-        
-        # Request-level quota checks (avoid partial acceptance)
-        if not effective_is_pro:
-            is_valid, error_msg = QuotaManager.validate_free_tier_quota(
-                file_size=0,
-                files_count=len(images),
-                credits_used=user_quota.credits_used,
-                credits_requested=len(images),
-            )
-            if not is_valid:
-                raise HTTPException(
-                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    detail=error_msg
-                )
-        else:
-            # Pro request-level credit check
-            is_valid, error_msg = QuotaManager.validate_pro_tier_quota(
-                file_size=0,
-                files_count=len(images),
-                pro_expiry=user_quota.pro_expiry_date,
-                credits_used=pro_credits_used,
-                credits_requested=len(images),
-            )
-            if not is_valid:
-                raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=error_msg)
-            # Reserve pro credits upfront (so bulk requests behave atomically).
-            user_quota.pro_credits_used = pro_credits_used + len(images)
-            pro_credits_used = user_quota.pro_credits_used
-
-        results = []
-        jobs_to_enqueue: list[tuple[str, str]] = []
-        
-        # Process each image
-        for image_file in images:
-            try:
-                job_id = str(uuid.uuid4())
-
-                # Stream upload to disk (avoid loading into RAM)
-                upload_path = os.path.join(settings.upload_dir, f"{job_id}.upload")
-                file_size = 0
-                head = b""
-
-                max_size = (
-                    settings.pro_tier_max_file_size
-                    if effective_is_pro
-                    else settings.free_tier_max_file_size
-                )
-
-                with open(upload_path, "wb") as out:
-                    while True:
-                        chunk = await image_file.read(1024 * 1024)
-                        if not chunk:
-                            break
-                        if len(head) < 4096:
-                            need = 4096 - len(head)
-                            head += chunk[:need]
-                        file_size += len(chunk)
-                        if file_size > max_size:
-                            out.close()
-                            try:
-                                os.remove(upload_path)
-                            except Exception:
-                                pass
-                            raise HTTPException(
-                                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                                detail=f"File size exceeds tier limit of {max_size:,} bytes"
-                            )
-                        out.write(chunk)
-                
-                # Validate extension
-                if not SecurityValidator.validate_file_extension(image_file.filename):
-                    try:
-                        os.remove(upload_path)
-                    except Exception:
-                        pass
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"Unsupported file type: {image_file.filename}"
-                    )
-                
-                # Validate magic number
-                sniffed_mime = SecurityValidator.sniff_mime_type(head) if head else None
-                valid, mime_or_error = SecurityValidator.validate_magic_number(head or b"0000")
-                if not valid:
-                    try:
-                        os.remove(upload_path)
-                    except Exception:
-                        pass
-                    raise HTTPException(
-                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                        detail=f"Invalid image format: {mime_or_error}"
-                    )
-
-                if sniffed_mime and sniffed_mime not in SecurityValidator.ALLOWED_MIME_TYPES:
-                    try:
-                        os.remove(upload_path)
-                    except Exception:
-                        pass
-                    raise HTTPException(
-                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                        detail=f"Unsupported MIME type: {sniffed_mime}"
-                    )
-                
-                # Validate OOM protection
-                SecurityValidator.validate_decompression_bomb_protection_path(upload_path)
-                
-                # Check quotas
-                if effective_is_pro and user_quota.pro_expiry_date:
-                    # Pro credits are reserved upfront at request-level; here we only validate per-file constraints.
-                    is_valid, error_msg = QuotaManager.validate_pro_tier_quota(
-                        file_size,
-                        len(images),
-                        user_quota.pro_expiry_date,
-                    )
-                    if not is_valid:
-                        try:
-                            os.remove(upload_path)
-                        except Exception:
-                            pass
-                        raise HTTPException(
-                            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                            detail=error_msg
-                        )
-                    quality = settings.pro_tier_quality
-                    expiry_days = settings.pro_tier_expiry_days
-                else:
-                    is_valid, error_msg = QuotaManager.validate_free_tier_quota(
-                        file_size,
-                        len(images),
-                        user_quota.credits_used,
-                        credits_requested=1,
-                    )
-                    if not is_valid:
-                        try:
-                            os.remove(upload_path)
-                        except Exception:
-                            pass
-                        raise HTTPException(
-                            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                            detail=error_msg
-                        )
-                    quality = settings.free_tier_quality
-                    expiry_days = settings.free_tier_expiry_days
-                
-                # Create job
-                expiry_date = datetime.utcnow() + timedelta(days=expiry_days)
-                
-                job = Job(
-                    id=job_id,
-                    session_id=session_id or ip_hash,
-                    user_quota_id=user_quota.id,
-                    status=JobStatus.PENDING,
-                    original_filename=image_file.filename,
-                    original_size=file_size,
-                    quality_setting=quality,
-                    created_at=datetime.utcnow(),
-                    expiry_date=expiry_date,
-                    upload_path=upload_path,
-                )
-                
-                db_session.add(job)
-                db_session.flush()
-                jobs_to_enqueue.append((job_id, upload_path))
-                
-                # Update quota (free tier increments per image; pro credits reserved upfront above)
-                if not effective_is_pro:
-                    user_quota.credits_used += 1
-                
-                results.append(OptimizationResultResponse(
-                    job_id=job_id,
-                    filename=image_file.filename,
-                    status=JobStatus.PENDING
-                ))
-            
-            except HTTPException:
-                raise
-            except Exception as e:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Error processing {image_file.filename}: {str(e)}"
-                )
-        
-        # Commit before enqueue to avoid race where worker dequeues before job is persisted.
-        db_session.commit()
-
-        # Enqueue jobs after commit (prevents "job not found" race in worker)
-        for job_id, upload_path in jobs_to_enqueue:
-            if not job_queue.enqueue_job(job_id):
-                # Mark job failed + cleanup upload file; keep API behavior: return 503.
-                try:
-                    job = db_session.query(Job).filter_by(id=job_id).first()
-                    if job:
-                        job.status = JobStatus.FAILED
-                        job.processing_error = "Job queue unavailable (Redis not connected)"
-                        db_session.commit()
-                except Exception:
-                    try:
-                        db_session.rollback()
-                    except Exception:
-                        pass
-                try:
-                    os.remove(upload_path)
-                except Exception:
-                    pass
-                raise HTTPException(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail="Job queue unavailable (Redis not connected)"
-                )
-        
-        return BulkOptimizeResponse(
-            success=True,
-            results=results,
-            message=f"Successfully queued {len(results)} image(s) for optimization"
-        )
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        db_session.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Internal server error: {str(e)}"
-        )
 
 
 # ============= LemonSqueezy Checkout (Server-side) =============

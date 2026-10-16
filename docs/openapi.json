@@ -48,112 +48,6 @@
         }
       }
     },
-    "/api/v1/optimize": {
-      "post": {
-        "tags": [
-          "optimization"
-        ],
-        "summary": "Optimize Images",
-        "description": "Optimize multiple images and queue for processing.\nSupports both free and pro tier with respective quotas.\n\n**Free Tier:**\n- Max 3 images per request\n- Max 10MB per image\n- Max 3 credits total\n- 7 day expiry\n\n**Pro Tier:**\n- Max 30 images per request\n- Max 50MB per image\n- Unlimited credits (with active subscription)\n- 40 day expiry",
-        "operationId": "optimize_images_api_v1_optimize_post",
-        "parameters": [
-          {
-            "name": "X-Session-Id",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Session-Id"
-            }
-          },
-          {
-            "name": "Authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/Body_optimize_images_api_v1_optimize_post"
-              }
-            }
-          }
-        },
-        "responses": {
-          "202": {
-            "description": "Images queued for optimization",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BulkOptimizeResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "413": {
-            "description": "File too large",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Quota exceeded",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/v1/checkout/lemonsqueezy": {
       "post": {
         "tags": [
@@ -313,6 +207,248 @@
             "content": {
               "application/json": {
                 "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/uploads/presign": {
+      "post": {
+        "tags": [
+          "uploads"
+        ],
+        "summary": "Presign Uploads",
+        "description": "Reserve one credit per file and return a presigned PUT URL per file (expires after UPLOAD_URL_TTL_SECONDS).",
+        "operationId": "presign_uploads_api_v1_uploads_presign_post",
+        "parameters": [
+          {
+            "name": "X-Session-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Session-Id"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PresignRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PresignResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "File too large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Quota exceeded or activation pending",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Uploads storage or job queue unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/uploads/complete": {
+      "post": {
+        "tags": [
+          "uploads"
+        ],
+        "summary": "Complete Uploads",
+        "description": "Verify uploaded objects and queue them. Idempotent: jobs no longer UPLOADING report their current state.",
+        "operationId": "complete_uploads_api_v1_uploads_complete_post",
+        "parameters": [
+          {
+            "name": "X-Session-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Session-Id"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompleteRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompleteResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown job id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "File too large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Quota exceeded or activation pending",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Uploads storage or job queue unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
@@ -569,74 +705,69 @@
   },
   "components": {
     "schemas": {
-      "Body_optimize_images_api_v1_optimize_post": {
+      "CompleteRequest": {
         "properties": {
-          "images": {
+          "job_ids": {
             "items": {
-              "type": "string",
-              "format": "binary"
+              "type": "string"
             },
             "type": "array",
-            "title": "Images"
-          },
-          "auth_token": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Auth Token"
-          },
-          "session_id_form": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Session Id Form"
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Job Ids",
+            "description": "Jobs from /uploads/presign"
           }
         },
         "type": "object",
         "required": [
-          "images"
+          "job_ids"
         ],
-        "title": "Body_optimize_images_api_v1_optimize_post"
+        "title": "CompleteRequest"
       },
-      "BulkOptimizeResponse": {
+      "CompleteResponse": {
         "properties": {
-          "success": {
-            "type": "boolean",
-            "title": "Success",
-            "description": "Whether all images were queued",
-            "default": true
-          },
-          "results": {
+          "jobs": {
             "items": {
-              "$ref": "#/components/schemas/OptimizationResultResponse"
+              "$ref": "#/components/schemas/CompletedJob"
             },
             "type": "array",
-            "title": "Results",
-            "description": "Array of job results for each image"
-          },
-          "message": {
-            "type": "string",
-            "title": "Message",
-            "description": "Informational message about the request"
+            "title": "Jobs"
           }
         },
         "type": "object",
         "required": [
-          "results",
-          "message"
+          "jobs"
         ],
-        "title": "BulkOptimizeResponse",
-        "description": "Response for bulk optimization request"
+        "title": "CompleteResponse"
+      },
+      "CompletedJob": {
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "title": "Job Id"
+          },
+          "status": {
+            "$ref": "#/components/schemas/JobStatusEnum"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason",
+            "description": "Rejection reason if status is 'rejected'"
+          }
+        },
+        "type": "object",
+        "required": [
+          "job_id",
+          "status"
+        ],
+        "title": "CompletedJob"
       },
       "ErrorResponse": {
         "properties": {
@@ -719,10 +850,12 @@
       "JobStatusEnum": {
         "type": "string",
         "enum": [
+          "uploading",
           "pending",
           "processing",
           "done",
-          "failed"
+          "failed",
+          "rejected"
         ],
         "title": "JobStatusEnum"
       },
@@ -746,6 +879,30 @@
             "type": "integer",
             "title": "Original Size",
             "description": "Original file size in bytes"
+          },
+          "original_width": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Original Width",
+            "description": "Original image width in pixels"
+          },
+          "original_height": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Original Height",
+            "description": "Original image height in pixels"
           },
           "optimized_size": {
             "anyOf": [
@@ -819,6 +976,18 @@
             "title": "Error Message",
             "description": "Error details if status is 'failed'"
           },
+          "rejection_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rejection Reason",
+            "description": "Why the upload was refused if status is 'rejected'"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time",
@@ -830,6 +999,44 @@
             "format": "date-time",
             "title": "Expiry Date",
             "description": "File expiration timestamp"
+          },
+          "processing_started_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Processing Started At",
+            "description": "When processing started (UTC)"
+          },
+          "processing_finished_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Processing Finished At",
+            "description": "When processing finished (UTC)"
+          },
+          "processing_duration_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Processing Duration Ms",
+            "description": "Total processing time in milliseconds"
           }
         },
         "type": "object",
@@ -970,31 +1177,131 @@
         ],
         "title": "LemonSqueezyCreateCheckoutResponse"
       },
-      "OptimizationResultResponse": {
+      "PresignFile": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Name",
+            "description": "Original filename (stored in the DB only)"
+          },
+          "size": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Size",
+            "description": "Exact file size in bytes"
+          },
+          "content_type": {
+            "type": "string",
+            "maxLength": 50,
+            "title": "Content Type",
+            "description": "image/jpeg, image/png or image/webp"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "size",
+          "content_type"
+        ],
+        "title": "PresignFile"
+      },
+      "PresignRequest": {
+        "properties": {
+          "files": {
+            "items": {
+              "$ref": "#/components/schemas/PresignFile"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Files",
+            "description": "Files to upload"
+          },
+          "auth_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auth Token",
+            "description": "LEGACY Pro JWT from the webhook response (optional)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "files"
+        ],
+        "title": "PresignRequest"
+      },
+      "PresignResponse": {
+        "properties": {
+          "files": {
+            "items": {
+              "$ref": "#/components/schemas/PresignedUpload"
+            },
+            "type": "array",
+            "title": "Files"
+          },
+          "complete_by": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Complete By",
+            "description": "Call /uploads/complete before this (UTC)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "files",
+          "complete_by"
+        ],
+        "title": "PresignResponse"
+      },
+      "PresignedUpload": {
         "properties": {
           "job_id": {
             "type": "string",
-            "title": "Job Id",
-            "description": "Unique job identifier for polling"
+            "title": "Job Id"
           },
-          "filename": {
+          "object_key": {
             "type": "string",
-            "title": "Filename",
-            "description": "Original filename"
+            "title": "Object Key"
           },
-          "status": {
-            "$ref": "#/components/schemas/JobStatusEnum",
-            "description": "Current processing status",
-            "default": "pending"
+          "upload_url": {
+            "type": "string",
+            "title": "Upload Url",
+            "description": "Presigned PUT URL (R2 S3 endpoint)"
+          },
+          "method": {
+            "type": "string",
+            "title": "Method",
+            "default": "PUT"
+          },
+          "headers": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Headers",
+            "description": "Headers the PUT must send exactly (Content-Type)"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Expires At",
+            "description": "When upload_url stops working (UTC)"
           }
         },
         "type": "object",
         "required": [
           "job_id",
-          "filename"
+          "object_key",
+          "upload_url",
+          "headers",
+          "expires_at"
         ],
-        "title": "OptimizationResultResponse",
-        "description": "Result of a single image optimization"
+        "title": "PresignedUpload"
       },
       "SessionLogoutResponse": {
         "properties": {

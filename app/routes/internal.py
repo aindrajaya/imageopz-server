@@ -10,7 +10,10 @@ from app.models import get_db
 from app.services.payments import apply_lemonsqueezy_body
 from app.utils.internal_auth import require_internal_auth
 
-router = APIRouter(prefix="/internal", tags=["internal"], dependencies=[Depends(require_internal_auth)])
+# include_in_schema=False: every /internal route stays out of the public OpenAPI schema.
+router = APIRouter(
+    prefix="/internal", tags=["internal"], dependencies=[Depends(require_internal_auth)], include_in_schema=False
+)
 logger = logging.getLogger("imageopz.routes.internal")
 
 

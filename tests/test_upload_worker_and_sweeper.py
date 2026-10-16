@@ -223,3 +223,37 @@ def test_worker_skips_rejected_jobs(client, fake_store, monkeypatch):
     assert ok is False
     assert _job(job_id).status.name == "REJECTED"
     assert output.uploaded == [] and fake_store.deleted == []
+
+
+def test_worker_fails_job_when_outputs_store_is_not_configured(client, fake_store, monkeypatch):
+    # U14: without outputs storage the worker used to mark the job DONE with no uploaded result.
+    from app.models import db, UsersQuota
+    from app.workers import job_worker
+
+    s = db.get_session()
+    try:
+        s.add(UsersQuota(id="quota_no_outputs", session_id="sess_no_outputs", credits_used=1))
+        s.commit()
+    finally:
+        s.close()
+    data = png_bytes()
+    job_id = _add_job(data=data, sid="sess_no_outputs", quota_id="quota_no_outputs")
+    fake_store.put(f"uploads/{job_id}", data, "image/png")
+    monkeypatch.setattr(job_worker, "r2_storage", None)
+
+    s = db.get_session()
+    try:
+        ok = job_worker.JobWorker(s, queue=_Queue(), store=fake_store).process_job(job_id)
+    finally:
+        s.close()
+
+    assert ok is False
+    job = _job(job_id)
+    assert job.status.name == "FAILED" and "not configured" in job.processing_error
+    assert job.r2_url is None and job.r2_object_key is None and job.optimized_size is None
+    assert fake_store.deleted == [f"uploads/{job_id}"]
+    s = db.get_session()
+    try:
+        assert s.get(UsersQuota, "quota_no_outputs").credits_used == 1  # no credit released
+    finally:
+        s.close()

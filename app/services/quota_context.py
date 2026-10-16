@@ -1,5 +1,5 @@
 """
-Request identity and quota resolution, moved verbatim from optimize_images (T-006b) so other endpoints share it.
+Request identity and quota resolution, moved verbatim from the former multipart upload handler (T-006b) so other endpoints share it.
 Anonymous users are keyed by session id (cookie imageopz_sid or X-Session-Id); Supabase-authenticated users by
 their User row. Behavior is unchanged.
 """

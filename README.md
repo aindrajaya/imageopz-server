@@ -29,8 +29,9 @@ flowchart LR
     GO -->|Cloud Tasks, OIDC| API
 ```
 
-The worker as a Cloud Tasks HTTP handler, presigned uploads and the Cloud Run deployment are roadmap items
-(see below). Today the code still uses a Redis queue and a separate worker process.
+Uploads go straight from the browser to R2 through presigned URLs (backend done; the UI change is T-006c).
+The worker as a Cloud Tasks HTTP handler and the Cloud Run deployment are roadmap items (see below).
+Today the code still uses a Redis queue and a separate worker process.
 
 ## Payments flow
 1. The Go ingress verifies the `X-Signature` HMAC over the raw body and refuses everything if the secret is unset.
@@ -77,7 +78,7 @@ issues/              incident notes
 
 ## Roadmap
 Current state and open tasks are in [STATE.md](docs/engineering/STATE.md).
-- **T-006:** presigned direct-to-R2 uploads (backend and UI).
+- **T-006:** presigned direct-to-R2 uploads; backend done and the only upload path, UI in T-006c.
 - **T-007:** Cloud Tasks worker, remove Redis.
 - **T-008:** containers and Cloud Run deployment (migration job, secrets, scheduler, payments ingress service).
 

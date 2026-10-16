@@ -3,7 +3,7 @@ Pydantic schemas for API request/response validation.
 Ensures type safety and automatic OpenAPI documentation.
 """
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime
 from enum import Enum
@@ -18,66 +18,7 @@ class JobStatusEnum(str, Enum):
     REJECTED = "rejected"
 
 
-# ============= Request Schemas =============
-
-class OptimizeImageRequest(BaseModel):
-    """Single image optimization request"""
-    filename: str = Field(..., description="Original filename with extension")
-    file_data: bytes = Field(..., description="Binary image data")
-    
-    class Config:
-        schema_extra = {
-            "example": {
-                "filename": "photo.jpg",
-                "file_data": b"binary_image_data"
-            }
-        }
-
-
-class BulkOptimizeRequest(BaseModel):
-    """Bulk image optimization request with multiple images"""
-    images: List[OptimizeImageRequest] = Field(
-        ...,
-        min_items=1,
-        description="Array of images to optimize"
-    )
-    
-    @validator("images")
-    def validate_images_count(cls, images):
-        if len(images) > 30:
-            raise ValueError("Maximum 30 images per request")
-        return images
-
-
 # ============= Response Schemas =============
-
-class OptimizationResultResponse(BaseModel):
-    """Result of a single image optimization"""
-    job_id: str = Field(..., description="Unique job identifier for polling")
-    filename: str = Field(..., description="Original filename")
-    status: JobStatusEnum = Field(default="pending", description="Current processing status")
-    
-    class Config:
-        schema_extra = {
-            "example": {
-                "job_id": "550e8400-e29b-41d4-a716-446655440000",
-                "filename": "photo.jpg",
-                "status": "pending"
-            }
-        }
-
-
-class BulkOptimizeResponse(BaseModel):
-    """Response for bulk optimization request"""
-    success: bool = Field(True, description="Whether all images were queued")
-    results: List[OptimizationResultResponse] = Field(
-        ...,
-        description="Array of job results for each image"
-    )
-    message: str = Field(
-        description="Informational message about the request"
-    )
-
 
 class JobStatusResponse(BaseModel):
     """Job status polling response"""

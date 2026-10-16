@@ -97,7 +97,6 @@ def create_app() -> FastAPI:
             "/api/v1/session/restore",
             "/api/v1/session/reconcile",
             "/api/v1/checkout/lemonsqueezy",
-            "/api/v1/optimize",
             "/api/v1/uploads/presign",
             "/api/v1/uploads/complete",
         }
