@@ -28,9 +28,9 @@ class Outcome(str, enum.Enum):
     """Result of one delivery; the internal endpoint maps RETRY to 503 and everything else to 200."""
     DONE = "done"
     FAILED = "failed"
-    SKIPPED = "skipped"  # not PENDING, or PROCESSING under a live lease, or the claim was lost
+    SKIPPED = "skipped"  # DONE/FAILED/REJECTED/UPLOADING, or the claim was lost
     UNKNOWN = "unknown"
-    RETRY = "retry"  # transient storage failure; the job is PENDING again
+    RETRY = "retry"  # transient storage failure (the job is PENDING again) or PROCESSING under a live lease
 
 
 class JobFailed(Exception):
@@ -91,7 +91,11 @@ class JobWorker:
         self.db_session.commit()
         self.db_session.refresh(job)
         if not claimed:
-            # Duplicate delivery, a job still UPLOADING/REJECTED, finished, or under another delivery's lease.
+            if job.status == JobStatus.PROCESSING:
+                # Live lease: keep the task retrying until the job finishes or the lease expires (crash recovery, J3).
+                logger.info("Job %s is under a live lease; delivery refused for retry", job_id)
+                return Outcome.RETRY
+            # Duplicate delivery, a job still UPLOADING/REJECTED, or finished.
             logger.info("Job %s is %s; not processing", job_id, job.status.name)
             return Outcome.SKIPPED
         # End the transaction the refresh began: processing can take minutes and must not pin a pooled connection.

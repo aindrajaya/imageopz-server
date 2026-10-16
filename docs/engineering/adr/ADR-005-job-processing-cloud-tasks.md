@@ -20,7 +20,8 @@ the enqueue, or when an ambiguous enqueue failure is reverted.
   errors: source download, output upload); never exception text. 401 for auth failures.
 - Claim with a lease: one conditional UPDATE moves PENDING -> PROCESSING and sets `processing_started_at` (the
   existing column); a PROCESSING job is reclaimed only when `processing_started_at` is older than
-  `JOB_LEASE_SECONDS` (1800). Otherwise 2xx no-op. The result is written by a second conditional UPDATE that requires
+  `JOB_LEASE_SECONDS` (1800). A delivery during a live lease answers 503 (amendment J3); DONE, FAILED and REJECTED
+  answer 2xx no-op. The result is written by a second conditional UPDATE that requires
   `status = PROCESSING AND processing_started_at = <this claim>`, so a slow or duplicate delivery can never overwrite
   DONE or a sweeper FAIL. A transient failure releases the claim (PROCESSING -> PENDING) and answers 503.
 - `/uploads/complete` keeps its semantics (commit, then enqueue; only failed jobs revert PENDING -> UPLOADING; 503 with
@@ -46,14 +47,16 @@ Task-name reuse: "It can take up to 24 hours ... for the task ID to be released"
 recommended. https://docs.cloud.google.com/tasks/docs/reference/rest/v2/projects.locations.queues.tasks/create
 ## Consequences
 - Duplicate and concurrent deliveries process a job at most once (Postgres row lock on the conditional UPDATE).
-- A delivery that dies mid-job (instance OOM) is redelivered quickly, finds a live lease and is acknowledged; the job
-  then waits for the sweeper, which FAILs it after 2x the lease (60 min). Accepted for simplicity; revisit by answering
-  503 while the lease is live if this happens in practice.
+- Crash recovery (amendment 2026-10-16, J3): a delivery that dies mid-job (instance OOM) is redelivered into a live
+  lease and answered 503, so Cloud Tasks keeps retrying with backoff until the job finishes (then 2xx no-op) or the lease
+  expires (then the retry reclaims and processes it). The sweeper FAIL at 2x the lease remains the backstop.
+  Cost: a duplicate delivery during normal processing also retries until the original finishes.
 - Cloud Run request timeout for the worker must be at least the dispatch deadline (1800 s), and the lease no shorter
   than it, so a reclaimed job's first delivery is gone (T-008).
 - Direct mode blocks `/complete` until the job is processed (local dev only).
-- The queue's retry config (`max_attempts`, backoff) bounds retries of transient failures before the sweeper does;
-  it must be set deliberately in T-008.
+- Queue retry config (T-008 requirement): retries must reach beyond `JOB_LEASE_SECONDS` (1800), or a crashed job is
+  never reclaimed by Cloud Tasks and only the sweeper FAILs it. E.g. `max_retry_duration` >= 2 h, `min_backoff` 30 s, `max_backoff` 600 s, `max_attempts` bounded. It also bounds retries of transient failures
+  before the sweeper does.
 ## Rollback
 Revert the T-007 commits; Alembic 0006 downgrade drops both columns.
 ## Validation

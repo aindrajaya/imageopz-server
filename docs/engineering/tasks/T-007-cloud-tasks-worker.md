@@ -127,15 +127,15 @@ Reviewer verdict table (summary): every section and AC met except "worker endpoi
 | 1 MUST | Fixed in commit 3: `expunge` + `commit` after the claim. Test first: `test_no_transaction_is_held_while_the_image_is_processed` failed (`[True]`), passes. |
 | 2 | Fixed: HEAD errors are transient, a missing object is permanent. Test first: `test_source_head_error_is_retriable` failed, passes. |
 | 3 | Fixed: the release sets `enqueued_at` (asserted in the same test); queue retry config is on the T-008 list. |
-| 4 | Not changed (it alters the specified sweeper semantics); logged as J3 with both options for the owner. |
+| 4 | Not changed in commit 3 (it alters the specified sweeper semantics); logged as J3. Resolved by the owner's amendment below (503 while leased). |
 | 5 | Recorded in ADR-005 as a deliberate deviation from the spec. |
 | 6 | Fixed: conftest unsets `JOB_TASKS_*`. |
 | 7 | `get_enqueuer()` now runs in the threadpool; `create_task` timeout left to the library default (T-008 list). |
 | 8-11 | Logged: J4, J5, J6, J7, J8. The "Metadata stripping failed" label is pre-existing wording, left unchanged. |
 
 ## T-008 list (from T-007)
-- Cloud Tasks queue for jobs in asia-northeast1; set `max_attempts`, min/max backoff and `max_concurrent_dispatches`
-  deliberately; task names must stay hashed (UUIDs are).
+- Cloud Tasks queue for jobs in asia-northeast1; retries must reach beyond `JOB_LEASE_SECONDS` (1800), e.g. `max_retry_duration` >= 2 h, `min_backoff` 30 s, `max_backoff` 600 s, `max_attempts` bounded;
+  set `max_concurrent_dispatches` deliberately; task names must stay hashed (UUIDs are).
 - Service accounts: an enqueuer identity for the API (`roles/cloudtasks.enqueuer` on the queue and
   `iam.serviceAccountUser` on the invoker SA), and an invoker SA whose OIDC token Cloud Tasks sends
   (`JOB_TASKS_SA_EMAIL`), with `roles/run.invoker` on the worker service.
@@ -150,6 +150,23 @@ Reviewer verdict table (summary): every section and AC met except "worker endpoi
 
 ## Follow-ups
 New: J1-J8 (registers.md). Closed: U8, Redis coupling (debt). U2 retagged T-008; U9 stays open (not covered by the U8 sweep).
+
+## Amendment (2026-10-16): J3, 503 during a live lease
+Fourth local commit, requested by the owner.
+- `POST /internal/jobs/process`: a job PROCESSING under a live lease now answers 503 `{"status": "retry"}` (generic,
+  retriable) instead of 200 `skipped`. DONE/FAILED/REJECTED stay 200 no-op; a lease-expired job is reclaimed as before.
+  `JobWorker.run` returns `Outcome.RETRY` for it, so a crashed delivery is retried until the lease expires and reclaimed.
+- Test first: `test_delivery_during_a_live_lease_is_retriable_and_changes_nothing` failed before the change
+  (`(200, {'status': 'skipped'}) != (503, {'status': 'retry'})`) on SQLite and Postgres, passes after.
+- New: `test_delivery_after_lease_expiry_reclaims_and_processes_once`, `test_delivery_after_a_terminal_status_is_a_2xx_noop`,
+  and Postgres `test_retry_during_the_original_delivery_is_refused_then_acknowledged` (original worker held mid-job:
+  retry 503, original finishes DONE, next retry 200 `skipped`, one upload). 10 repeated Postgres runs, all green.
+- Deliberate test changes (behavior change, not to make a change pass): `test_lease_blocks_redelivery_until_it_expires`
+  (added in commit 2) asserted 200 `skipped` for a live lease; it is replaced by the first two tests above.
+  `test_concurrent_deliveries_process_exactly_once` now accepts `retry` or `skipped` for the losing delivery (timing-
+  dependent: it sees the winner's live lease or its DONE); "exactly one done, one upload, final DONE" is unchanged.
+- Queue retry config requirement added to ADR-005, registers (T-008 checklist) and the T-008 list above.
+- Suites: SQLite 130 passed, 13 skipped; Postgres 16.15 143 passed.
 
 ## Owner commands (not run)
 git push -u origin feat/cloud-tasks-worker

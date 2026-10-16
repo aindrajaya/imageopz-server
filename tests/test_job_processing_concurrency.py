@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from tests.test_job_processing import _job, _uploaded_job
+from tests.test_job_processing import _job, _uploaded_job, internal  # noqa: F401 (fixture)
 
 pytestmark = pytest.mark.skipif(not os.environ.get("TEST_DATABASE_URL"), reason="requires TEST_DATABASE_URL (Postgres)")
 
@@ -65,6 +65,46 @@ def test_concurrent_deliveries_process_exactly_once(client, fake_store, monkeypa
     with ThreadPoolExecutor(max_workers=2) as pool:
         outcomes = sorted(o.value for o in pool.map(deliver, range(2)))
 
-    assert outcomes == ["done", "skipped"]
+    # The loser sees the winner's live lease (retry) or its DONE (skipped), depending on timing.
+    assert outcomes[0] == "done" and outcomes[1] in ("retry", "skipped")
     assert output.uploaded == [job_id]
     assert _job(job_id).status.name == "DONE"
+
+
+def test_retry_during_the_original_delivery_is_refused_then_acknowledged(client, fake_store, internal, monkeypatch):
+    # J3: the original worker is mid-job when Cloud Tasks retries; the retry gets 503 until the job is DONE.
+    from app.models import db
+    from app.workers import job_worker
+    from tests.test_job_processing import _Output, _deliver
+
+    output = _Output()
+    monkeypatch.setattr(job_worker, "r2_storage", output)
+    job_id = _uploaded_job(fake_store)
+    inside, release = threading.Event(), threading.Event()
+    real = job_worker.JobWorker._optimize
+
+    def slow(self, job):
+        inside.set()
+        assert release.wait(10)
+        return real(self, job)
+
+    monkeypatch.setattr(job_worker.JobWorker, "_optimize", slow)
+
+    def original():
+        s = db.get_session()
+        try:
+            return job_worker.JobWorker(s, store=fake_store).run(job_id)
+        finally:
+            s.close()
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        first = pool.submit(original)
+        assert inside.wait(10)
+        retry = _deliver(client, job_id)
+        assert retry.status_code == 503 and _job(job_id).status.name == "PROCESSING"
+        release.set()
+        assert first.result(timeout=10).value == "done"
+
+    again = _deliver(client, job_id)
+    assert (again.status_code, again.json()) == (200, {"status": "skipped"})
+    assert output.uploaded == [job_id] and _job(job_id).status.name == "DONE"

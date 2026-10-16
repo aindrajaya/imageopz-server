@@ -51,7 +51,8 @@ async def process_job(request: Request):
     """
     Body: {"job_id": "<uuid>"} (Cloud Tasks task from app/services/job_enqueuer.py).
     200 {"status": done|failed|skipped|unknown|ignored} for every terminal outcome, including duplicate deliveries and
-    unknown jobs, so Cloud Tasks does not retry them; 503 (generic body) only for retriable failures; 401 auth.
+    unknown jobs, so Cloud Tasks does not retry them; 503 (generic body) for retriable failures and for a job
+    PROCESSING under a live lease (retried until it finishes or the lease expires); 401 auth.
     """
     try:
         job_id = json.loads(await request.body()).get("job_id")
