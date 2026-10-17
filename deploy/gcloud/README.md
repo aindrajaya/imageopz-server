@@ -20,15 +20,18 @@ Nothing has been run against GCP yet (T-008a, synced with DEPLOY-PLAN section 0 
 | 30-secrets.sh | env | secret containers + per-secret accessor bindings |
 | 40-queues.sh | env | jobs (1 concurrent) and payments (7-day retries) queues, enqueuer and actAs bindings |
 | 50-jobs.sh | env | the migrate job (the only Cloud Run Job, Q1); `EXECUTE_MIGRATE=1` runs it |
-| 60-deploy-services.sh | env | worker (max 1, concurrency 2), api, payments by digest; startup probes on `/ready` |
+| 60-deploy-services.sh | env | worker (max 1, concurrency 2), api, payments by digest (unset digest = keep the running image); startup probes on `/ready` |
 | 65-service-iam.sh | env | invoker bindings (worker: tasks-invoker and scheduler; api/payments: allUsers) |
 | 70-scheduler.sh | env | Cloud Scheduler -> worker `/internal/maintenance/{sweep,cleanup}` with OIDC (staging created paused) |
-| 80-wif.sh | env (+ project pool) | GitHub WIF provider, per-env deployer identity, resource-scoped roles |
+| 80-wif.sh | env (+ project pool) | GitHub WIF provider, per-env deployer identity, resource-scoped roles; `WIF_STAGE=registry` (image push only) or `all` |
 | 90-observability.sh | env (+ budget once) | log metric, alert policies (incl. payments queue not draining), budget |
 | 99-kill-switch.sh | env | `stop` / `resume`: queues, schedules, public ingress (Q8) |
 | ci-rollout.sh | env | image rollout used by `.github/workflows/deploy.yml` (migrate, services, smoke test) |
 
-Order: 00, 10, 20, 30 (+ secret values), 40, 50 (EXECUTE_MIGRATE=1), 60, 65, 70, 80, 90. Staging first.
+Order (first bring-up, docs/engineering/deploy/STAGING-RUNBOOK.md): 00, 10, 20, 30 (+ secret values), 40,
+80 (`WIF_STAGE=registry`), repository variables, `deploy.yml` dispatch with `build_only=true` (digests into the env
+file), 50, 60, 80 (`WIF_STAGE=all`), 50 (`EXECUTE_MIGRATE=1`), 65, first CI rollout, 70, 90. Staging first.
+Run as `./deploy/gcloud/NN-*.sh`; `bash deploy/gcloud/NN-*.sh` if the executable bit is lost.
 
 ## CI deploy (`.github/workflows/deploy.yml`, dormant until T-008c)
 The workflow does nothing until these repository variables exist (Settings > Secrets and variables > Actions >
@@ -36,7 +39,9 @@ Variables; none of them is a secret). Values come from the `80-wif.sh` output:
 - `GCP_WIF_PROVIDER` = `projects/<number>/locations/global/workloadIdentityPools/github/providers/imageopz-server`
 - `GCP_PROJECT_ID`, `GCP_REGION`
 - `GCP_DEPLOYER_STAGING` = `iz-deployer-staging@<project>.iam.gserviceaccount.com`, `GCP_DEPLOYER_PROD` likewise
-Also create the GitHub Environment `production` with the owner as required reviewer (checklist item 18). The first
+Create the GitHub Environment `production` with the owner as required reviewer BEFORE the variables (checklist item
+18; otherwise GitHub creates it without a reviewer). Bootstrap: `gh workflow run deploy.yml --ref main -f
+build_only=true` builds and pushes both images and prints their digests in the run summary, without deploying. The first
 deploy of each job and service is the owner's (50, 60, 65); CI then only swaps images (`ci-rollout.sh`).
 
 ## Owner steps outside gcloud (Cloudflare, Q4)

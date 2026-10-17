@@ -7,9 +7,18 @@ name: deploy
 # same digests prod-<sha>, migrate, services. Nothing is rebuilt for prod.
 # CI changes images only (`update --image`); flags, env, secrets and IAM stay with deploy/gcloud/ (owner scripts).
 # The WIF provider condition pins this file on refs/heads/main (deploy/gcloud/80-wif.sh); do not rename it.
+# Manual runs (workflow_dispatch, ref main only: other refs fail the WIF condition): build_only=true runs tests and
+# build, pushes both images and prints their digests in the run summary, and deploys nothing (bootstrap, T-008c1:
+# the first image exists before any service does). build_only=false is the same flow as a push.
 on:
   push:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      build_only:
+        description: Build and push the images only (no migrate, no deploy)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -83,13 +92,22 @@ jobs:
           provenance: false
           sbom: false
           tags: ${{ env.REGISTRY }}/payments-ingress:${{ github.sha }}
+      # Env-file lines for deploy/gcloud (STAGING-RUNBOOK Phase 4).
       - name: Digests
+        env:
+          API_DIGEST: ${{ steps.api.outputs.digest }}
+          PAYMENTS_DIGEST: ${{ steps.payments.outputs.digest }}
         run: |
-          echo "api@${{ steps.api.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "payments-ingress@${{ steps.payments.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo '```'
+            echo "API_IMAGE='${REGISTRY}/api@${API_DIGEST}'"
+            echo "PAYMENTS_IMAGE='${REGISTRY}/payments-ingress@${PAYMENTS_DIGEST}'"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
   staging:
-    if: vars.GCP_WIF_PROVIDER != ''
+    # inputs.build_only is null on push, so a push always deploys.
+    if: vars.GCP_WIF_PROVIDER != '' && inputs.build_only != true
     needs: build
     concurrency:
       group: deploy-staging
@@ -121,7 +139,7 @@ jobs:
           DRY_RUN: "0"
 
   production:
-    if: vars.GCP_WIF_PROVIDER != ''
+    if: vars.GCP_WIF_PROVIDER != '' && inputs.build_only != true
     needs: [build, staging]
     concurrency:
       group: deploy-production

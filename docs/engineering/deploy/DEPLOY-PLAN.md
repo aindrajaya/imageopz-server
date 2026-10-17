@@ -3,7 +3,8 @@
 Status: owner decisions Q1-Q11 recorded 2026-10-17 (section 0); updated by T-008b1 and T-008b2. Nothing in this plan
 has been created. Scripts: `deploy/gcloud/` (DRY_RUN=1 by default), in line with section 0 since T-008b2. App changes:
 T-008b1 (route roles, maintenance endpoints, H1, C1, header-only sessions); T-008b2 (Dockerfile, CI image check,
-dormant deploy workflow, TRUSTED_PROXY_HOPS, Go `/health` and `/ready`, kill switch). Open: A1, S4, SECRET_KEY scope.
+dormant deploy workflow, TRUSTED_PROXY_HOPS, Go `/health` and `/ready`, kill switch); T-008c1 (bootstrap: `80`
+stages, `build_only` dispatch, `60` digest fallback and `TRUSTED_PROXY_HOPS` parameter). Open: A1, S4, SECRET_KEY scope.
 
 ## 0. Owner decisions (2026-10-17)
 | Q | Decision | Where it lands |
@@ -228,6 +229,10 @@ Notes
   `attribute.repo_env = <repository_id>:<environment>`, so no other repo or provider in the pool can match. The
   workflow puts the owner approval gate on that job.
   Validate the `has(assertion.environment)` mapping on the first CI run with both an environment job and a plain job.
+  Stages (T-008c1): `WIF_STAGE=registry` grants only workloadIdentityUser and artifactregistry.writer, enough for the
+  `build_only` dispatch that pushes the first images; `WIF_STAGE=all` adds run.developer and actAs once 50 and 60
+  have created the job and services (checked before any change). A `workflow_dispatch` run of deploy.yml on main has
+  the same `ref` and `workflow_ref` claims as a push, so it matches the same condition.
 - Shared repo, mutable tags: the staging deployer could also move a `prod-*` tag (artifactregistry.writer on the
   one repo). Accepted: prod deploys by digest, and the tag only protects images from cleanup.
 - Risk to check on the first CI run: whether `run.developer` granted per service/job is enough for
@@ -330,6 +335,9 @@ requests never queue for a connection. The api runs concurrency 20 on a pool of 
    `$PORT`; `SERVICE_ROLE` must be api or worker) and `payments-ingress` once, tags both `<git-sha>`, pushes to
    Artifact Registry and records the digests. Every job is guarded by `vars.GCP_WIF_PROVIDER != ''`; one
    concurrency group, so deploys never overlap. Variables: deploy/gcloud/README.md "CI deploy".
+   Manual runs (`workflow_dispatch` on main, T-008c1): `build_only=true` stops after the build and prints the
+   env-file lines `API_IMAGE=...@sha256:...` / `PAYMENTS_IMAGE=...` in the run summary (bootstrap: the first image
+   exists before any service); `build_only=false` is the push flow.
    CI swaps images only (`deploy/gcloud/ci-rollout.sh`: `gcloud run jobs|services update --image`), so flags, env,
    secrets and IAM stay owned by `50`, `60` and `65`.
 2. Staging (deployer `iz-deployer-staging`): update the migrate job's image and `execute --wait` [R9], then api,
@@ -473,7 +481,9 @@ policy; 10 USD budget alerts and the kill switch (section 0). The largest variab
 | 24 | Database secrets use the bare `postgresql://` form (section 5) | owner |
 
 Script order (each first with DRY_RUN=1, then DRY_RUN=0): 00, 10, 20 (per env), 30 (per env, then add the secret
-values), 40, 50 with EXECUTE_MIGRATE=1, 60, 65, 70, 80, 90. Staging first; prod after item 8.
+values), 40, 80 with WIF_STAGE=registry, repository variables, `build_only` dispatch (digests into the env file), 50,
+60, 80 with WIF_STAGE=all, 50 with EXECUTE_MIGRATE=1, 65, first CI rollout, 70, 90 (STAGING-RUNBOOK.md, T-008c1).
+Staging first; prod after item 8.
 
 ## 12. Rollback runbook
 1. Stop the damage: `gcloud tasks queues pause imageopz-jobs-<env> --location=asia-northeast1` (deliveries wait;

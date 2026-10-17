@@ -2,13 +2,20 @@
 # 60 - Deploy the three Cloud Run services for ENV from images pinned BY DIGEST. First deploy by the owner; after
 # that GitHub Actions deploys with the same flags (DEPLOY-PLAN.md "Image strategy").
 # Order: worker first (its URL is the Cloud Tasks target and OIDC audience), then api and payments.
-# Prerequisites: 20, 30 (with secret versions added), 40, and the migrate job executed (50-jobs.sh).
+# Prerequisites: 20, 30 (with secret versions added), 40, 50 (the migrate job). The first deploy may precede the
+# migration: /ready checks only the connection, and api/payments take no public traffic before 65.
 # The public invoker binding for api/payments is NOT set here (deployer stays without setIamPolicy): 65-service-iam.sh.
+#
+# Images (T-008c1): API_IMAGE (api and worker) and PAYMENTS_IMAGE, pinned by digest, from the env file. When one is
+# unset, each service keeps the image it runs now (read with describe), so a re-run that only changes config never
+# rolls a service back to an older digest left in the env file. A service that does not exist yet needs the digest.
+# All three images are resolved before the first deploy, so a missing one stops the script before any change.
 #
 # Usage:
 #   PROJECT_ID=... REGION=... ENV=staging|prod [DRY_RUN=0] \
-#   API_IMAGE=REGION-docker.pkg.dev/PROJECT/imageopz/api@sha256:... \
-#   PAYMENTS_IMAGE=REGION-docker.pkg.dev/PROJECT/imageopz/payments-ingress@sha256:... \
+#   [API_IMAGE=REGION-docker.pkg.dev/PROJECT/imageopz/api@sha256:...] \
+#   [PAYMENTS_IMAGE=REGION-docker.pkg.dev/PROJECT/imageopz/payments-ingress@sha256:...] \
+#   [TRUSTED_PROXY_HOPS=1] \
 #   UI_ORIGINS=https://ui.example,https://www.ui.example \
 #   R2_ACCOUNT_ID=... R2_BUCKET_NAME=... R2_CUSTOM_DOMAIN=https://... R2_UPLOADS_BUCKET=... \
 #   SUPABASE_URL=https://<ref>.supabase.co SUPABASE_ANON_KEY=<publishable key> \
@@ -18,12 +25,38 @@
 set -euo pipefail
 . "$(dirname "$0")/lib.sh"
 require_env_params
-for v in API_IMAGE PAYMENTS_IMAGE UI_ORIGINS R2_ACCOUNT_ID R2_BUCKET_NAME R2_CUSTOM_DOMAIN R2_UPLOADS_BUCKET \
+for v in UI_ORIGINS R2_ACCOUNT_ID R2_BUCKET_NAME R2_CUSTOM_DOMAIN R2_UPLOADS_BUCKET \
          SUPABASE_URL SUPABASE_ANON_KEY LEMONSQUEEZY_STORE_ID LEMONSQUEEZY_VARIANT_ID; do
   require_var "$v" "see deploy/gcloud/env.example"
 done
-case "$API_IMAGE" in *@sha256:*) ;; *) die "API_IMAGE must be pinned by digest (...@sha256:...)" ;; esac
-case "$PAYMENTS_IMAGE" in *@sha256:*) ;; *) die "PAYMENTS_IMAGE must be pinned by digest (...@sha256:...)" ;; esac
+TRUSTED_PROXY_HOPS="${TRUSTED_PROXY_HOPS:-1}"
+case "$TRUSTED_PROXY_HOPS" in ''|*[!0-9]*) die "TRUSTED_PROXY_HOPS must be a non-negative integer" ;; esac
+
+# image_for SERVICE VAR: the image to deploy on SERVICE; VAR names the env-file variable that overrides it.
+image_for() {
+  local svc="$1" var="$2" explicit current
+  explicit="${!var:-}"
+  if [ -n "$explicit" ]; then
+    case "$explicit" in *@sha256:*) ;; *) die "$var must be pinned by digest (...@sha256:...)" ;; esac
+    echo "# $svc: image from $var" >&2
+    echo "$explicit"
+    return
+  fi
+  if [ "$DRY_RUN" != "0" ]; then
+    echo "# dry-run: $var unset, would keep the image $svc runs now (describe; error if $svc does not exist)" >&2
+    echo "CURRENT_IMAGE_OF_${svc}"
+    return
+  fi
+  current="$(gcloud run services describe "$svc" --project="$PROJECT_ID" --region="$REGION" \
+    --format='value(spec.template.spec.containers[0].image)' 2>/dev/null)" || current=""
+  [ -n "$current" ] || die "$var is unset and the image of $svc cannot be read (not created yet?): set $var to a digest (...@sha256:...) for its first deploy"
+  case "$current" in *@sha256:*) ;; *) die "$svc runs $current, not pinned by digest: set $var explicitly" ;; esac
+  echo "# $svc: $var unset, keeping the image it runs now" >&2
+  echo "$current"
+}
+WORKER_IMAGE="$(image_for "$(svc_worker)" API_IMAGE)"
+API_SVC_IMAGE="$(image_for "$(svc_api)" API_IMAGE)"
+PAYMENTS_SVC_IMAGE="$(image_for "$(svc_payments)" PAYMENTS_IMAGE)"
 
 if [ "$ENV" = "prod" ]; then APP_ENVIRONMENT=production; LS_TEST_MODE=false; else APP_ENVIRONMENT=staging; LS_TEST_MODE=true; fi
 WORKER_URL="$(run_url "$(svc_worker)")"
@@ -80,7 +113,7 @@ banner "Deploy $(svc_worker)"
 # --cpu/--memory: 50 MB / ~179 MP worst case; measure in staging before prod (DEPLOY-PLAN.md open question).
 # --no-allow-unauthenticated: only principals with roles/run.invoker (the tasks-invoker SA) get through.
 run gcloud run deploy "$(svc_worker)" --project="$PROJECT_ID" --region="$REGION" \
-  --image="$API_IMAGE" \
+  --image="$WORKER_IMAGE" \
   --service-account="$(sa_email worker)" \
   --ingress=internal --no-allow-unauthenticated \
   --concurrency="$WORKER_CONCURRENCY" --min-instances=0 --max-instances="$WORKER_MAX" \
@@ -100,8 +133,8 @@ API_ENV="$TMPDIR_ENV/api.yaml"
   # Rightmost X-Forwarded-For entry = the address Google's front end appended; the run.app header shape is not
   # documented, so verify in staging (xff_entries in the request log, checklist item 15) and set 2 if it is
   # "<client>,<front-end>" (app/config.py:trusted_proxy_hops). Behind a load balancer, 2 is safe only with the run.app
-  # URL closed (--no-default-url or internal-and-cloud-load-balancing ingress).
-  yaml_kv TRUSTED_PROXY_HOPS 1
+  # URL closed (--no-default-url or internal-and-cloud-load-balancing ingress). Set in the env file (default 1).
+  yaml_kv TRUSTED_PROXY_HOPS "$TRUSTED_PROXY_HOPS"
   yaml_kv CORS_ALLOW_ORIGINS "$UI_ORIGINS"
   yaml_kv CORS_ALLOW_CREDENTIALS true
   yaml_kv DB_POOL_SIZE 2
@@ -128,7 +161,7 @@ banner "Deploy $(svc_api)"
 # --concurrency=20 with DB_POOL_SIZE=2: requests beyond 2 concurrent DB sessions wait for the pool (30 s), so keep
 #   concurrency modest; --max-instances caps cost and pooler connections (G1).
 run gcloud run deploy "$(svc_api)" --project="$PROJECT_ID" --region="$REGION" \
-  --image="$API_IMAGE" \
+  --image="$API_SVC_IMAGE" \
   --service-account="$(sa_email api)" \
   --ingress=all \
   --concurrency=20 --min-instances=0 --max-instances="$API_MAX" \
@@ -152,7 +185,7 @@ show_env_file "$PAYMENTS_ENV"
 banner "Deploy $(svc_payments)"
 # --concurrency=8 matches the Go pool (pgxpool MaxConns = 8, services/payments-go/internal/httpapi/pgstore.go).
 run gcloud run deploy "$(svc_payments)" --project="$PROJECT_ID" --region="$REGION" \
-  --image="$PAYMENTS_IMAGE" \
+  --image="$PAYMENTS_SVC_IMAGE" \
   --service-account="$(sa_email payments)" \
   --ingress=all \
   --concurrency=8 --min-instances=0 --max-instances="$PAYMENTS_MAX" \
