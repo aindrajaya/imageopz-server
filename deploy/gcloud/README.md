@@ -1,7 +1,7 @@
 # deploy/gcloud
 
 Reviewable, ordered gcloud scripts for the plan in [DEPLOY-PLAN.md](../../docs/engineering/deploy/DEPLOY-PLAN.md).
-Nothing has been run against GCP yet (T-008a).
+Nothing has been run against GCP yet (T-008a, synced with DEPLOY-PLAN section 0 in T-008b2).
 
 - `DRY_RUN=1` (default) prints every command and executes nothing, not even `describe`.
 - `DRY_RUN=0` executes. Creates are guarded by `describe` (idempotent re-runs). Queues, scheduler jobs, WIF
@@ -16,14 +16,37 @@ Nothing has been run against GCP yet (T-008a).
 |---|---|---|
 | 00-enable-apis.sh | project | enable APIs |
 | 10-artifact-registry.sh | project | Docker repo `imageopz`, cleanup policy (`ar-cleanup-policy.json`, dry-run until `CLEANUP_DRY_RUN=0`) |
-| 20-service-accounts.sh | env | one service account per service/job, no roles |
+| 20-service-accounts.sh | env | one service account per service/job (api, worker, payments, tasks-invoker, migrate, scheduler), no roles |
 | 30-secrets.sh | env | secret containers + per-secret accessor bindings |
-| 40-queues.sh | env | jobs and payments queues (J3 retry config), enqueuer and actAs bindings |
-| 50-jobs.sh | env | migrate, sweep-uploads, cleanup-expired jobs; scheduler invoker; `EXECUTE_MIGRATE=1` runs migrate |
-| 60-deploy-services.sh | env | worker, api, payments by digest |
-| 65-service-iam.sh | env | invoker bindings (worker: tasks-invoker; api/payments: allUsers) |
-| 70-scheduler.sh | env | Cloud Scheduler -> jobs (staging created paused) |
+| 40-queues.sh | env | jobs (1 concurrent) and payments (7-day retries) queues, enqueuer and actAs bindings |
+| 50-jobs.sh | env | the migrate job (the only Cloud Run Job, Q1); `EXECUTE_MIGRATE=1` runs it |
+| 60-deploy-services.sh | env | worker (max 1, concurrency 2), api, payments by digest; startup probes on `/ready` |
+| 65-service-iam.sh | env | invoker bindings (worker: tasks-invoker and scheduler; api/payments: allUsers) |
+| 70-scheduler.sh | env | Cloud Scheduler -> worker `/internal/maintenance/{sweep,cleanup}` with OIDC (staging created paused) |
 | 80-wif.sh | env (+ project pool) | GitHub WIF provider, per-env deployer identity, resource-scoped roles |
-| 90-observability.sh | env (+ budget once) | log metric, alert policies, budget |
+| 90-observability.sh | env (+ budget once) | log metric, alert policies (incl. payments queue not draining), budget |
+| 99-kill-switch.sh | env | `stop` / `resume`: queues, schedules, public ingress (Q8) |
+| ci-rollout.sh | env | image rollout used by `.github/workflows/deploy.yml` (migrate, services, smoke test) |
 
 Order: 00, 10, 20, 30 (+ secret values), 40, 50 (EXECUTE_MIGRATE=1), 60, 65, 70, 80, 90. Staging first.
+
+## CI deploy (`.github/workflows/deploy.yml`, dormant until T-008c)
+The workflow does nothing until these repository variables exist (Settings > Secrets and variables > Actions >
+Variables; none of them is a secret). Values come from the `80-wif.sh` output:
+- `GCP_WIF_PROVIDER` = `projects/<number>/locations/global/workloadIdentityPools/github/providers/imageopz-server`
+- `GCP_PROJECT_ID`, `GCP_REGION`
+- `GCP_DEPLOYER_STAGING` = `iz-deployer-staging@<project>.iam.gserviceaccount.com`, `GCP_DEPLOYER_PROD` likewise
+Also create the GitHub Environment `production` with the owner as required reviewer (checklist item 18). The first
+deploy of each job and service is the owner's (50, 60, 65); CI then only swaps images (`ci-rollout.sh`).
+
+## Owner steps outside gcloud (Cloudflare, Q4)
+- Create the staging buckets `imageopz-staging` (outputs) and `imageopz-uploads-staging` (uploads) in the R2 dashboard.
+- Create two R2 API tokens with Object Read & Write scoped to one staging bucket each; add the values to
+  `imageopz-r2-outputs-*-staging` and `imageopz-r2-uploads-*-staging` (`gcloud secrets versions add ... --data-file=-`).
+- Uploads bucket CORS (staging origin and `http://localhost:3000`) and the `uploads/` 1-day lifecycle rule
+  (DEPLOY-PLAN.md section 7, U3).
+
+## Old payment tasks (manual check, Q9)
+The alert in 90 fires when the payments queue has not drained for 1 h (there is no task-age metric). To look:
+`gcloud tasks list --queue=imageopz-payments-<env> --location=<region> --format='table(name.basename(),createTime,dispatchCount,lastAttempt.responseStatus.code)'`.
+A task older than a few minutes is retrying; fix the cause before the 7-day limit, then let the queue drain.

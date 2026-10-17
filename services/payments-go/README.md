@@ -48,7 +48,7 @@ A commit failure after a successful enqueue answers 503; the sender's retry enqu
 
 `DATABASE_URL` must connect as the table-owner role (the one Alembic uses): the table has RLS enabled with no policies, so a non-owner role sees nothing and every insert would fail.
 
-Endpoints: `POST /webhooks/lemonsqueezy` (1 MiB limit -> 413), `GET /healthz` (no DB), `GET /readyz` (DB ping). SIGTERM drains gracefully.
+Endpoints: `POST /webhooks/lemonsqueezy` (1 MiB limit -> 413), `GET /health` (no DB), `GET /ready` (DB ping; Cloud Run reserves some paths ending in `z`: https://docs.cloud.google.com/run/docs/known-issues). SIGTERM drains gracefully.
 Secrets, payloads and customer emails are never logged.
 
 ## Run and test

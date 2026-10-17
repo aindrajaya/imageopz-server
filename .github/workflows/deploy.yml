@@ -1,0 +1,161 @@
+name: deploy
+
+# DORMANT until T-008c: every job is guarded by `vars.GCP_WIF_PROVIDER != ''`, so nothing runs until the owner creates
+# the repository variables (deploy/gcloud/README.md "CI deploy"). No secrets: Workload Identity Federation only.
+# Flow (DEPLOY-PLAN.md section 6): tests -> build both images once and push by commit SHA -> staging (migrate job,
+# then api, worker, payments, by digest) -> production (GitHub Environment `production`, owner approval): tag the
+# same digests prod-<sha>, migrate, services. Nothing is rebuilt for prod.
+# CI changes images only (`update --image`); flags, env, secrets and IAM stay with deploy/gcloud/ (owner scripts).
+# The WIF provider condition pins this file on refs/heads/main (deploy/gcloud/80-wif.sh); do not rename it.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Deploys never overlap per environment: job-level groups, so a run waiting for prod approval does not hold staging.
+# A newer push waits instead of cancelling a rollout half-way; GitHub keeps one pending run per group, so a third push
+# replaces the queued second one (the newest commit is the one that deploys).
+
+env:
+  PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+  REGION: ${{ vars.GCP_REGION }}
+  REGISTRY: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/imageopz
+
+jobs:
+  tests:
+    if: vars.GCP_WIF_PROVIDER != ''
+    permissions:
+      contents: read
+    uses: ./.github/workflows/backend-tests.yml
+
+  build:
+    if: vars.GCP_WIF_PROVIDER != ''
+    needs: tests
+    concurrency:
+      group: deploy-build
+      cancel-in-progress: false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      api: ${{ steps.api.outputs.digest }}
+      payments: ${{ steps.payments.outputs.digest }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOYER_STAGING }}
+          token_format: access_token
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ vars.GCP_REGION }}-docker.pkg.dev
+          username: oauth2accesstoken
+          password: ${{ steps.auth.outputs.access_token }}
+      # buildx and the BuildKit image pinned (buildkit v0.33.1 = buildx-stable-1 on 2026-10-17, Docker Hub index digest).
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          version: v0.38.0
+          driver-opts: image=moby/buildkit:v0.33.1@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
+      # provenance/sbom off: a plain image manifest, so the digest Cloud Run runs is the digest pushed here.
+      - id: api
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          provenance: false
+          sbom: false
+          tags: ${{ env.REGISTRY }}/api:${{ github.sha }}
+      - id: payments
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: services/payments-go
+          platforms: linux/amd64
+          push: true
+          provenance: false
+          sbom: false
+          tags: ${{ env.REGISTRY }}/payments-ingress:${{ github.sha }}
+      - name: Digests
+        run: |
+          echo "api@${{ steps.api.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "payments-ingress@${{ steps.payments.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"
+
+  staging:
+    if: vars.GCP_WIF_PROVIDER != ''
+    needs: build
+    concurrency:
+      group: deploy-staging
+      cancel-in-progress: false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      ENV: staging
+      API_IMAGE: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/imageopz/api@${{ needs.build.outputs.api }}
+      PAYMENTS_IMAGE: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/imageopz/payments-ingress@${{ needs.build.outputs.payments }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOYER_STAGING }}
+      # skip_install: the runner's preinstalled gcloud, configured with the auth step's credentials (no download).
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+        with:
+          skip_install: true
+      - name: Roll out by digest
+        run: bash deploy/gcloud/ci-rollout.sh
+        env:
+          DRY_RUN: "0"
+
+  production:
+    if: vars.GCP_WIF_PROVIDER != ''
+    needs: [build, staging]
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    # Required reviewer (owner) is configured on this GitHub Environment; the prod deployer only trusts jobs in it.
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      ENV: prod
+      API_IMAGE: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/imageopz/api@${{ needs.build.outputs.api }}
+      PAYMENTS_IMAGE: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/imageopz/payments-ingress@${{ needs.build.outputs.payments }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOYER_PROD }}
+      # skip_install: the runner's preinstalled gcloud, configured with the auth step's credentials (no download).
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+        with:
+          skip_install: true
+      # prod-<sha> tags are kept by the Artifact Registry cleanup policy (deploy/gcloud/ar-cleanup-policy.json).
+      - name: Tag the promoted digests prod-<sha>
+        run: |
+          set -euo pipefail
+          gcloud artifacts docker tags add "$API_IMAGE" "$REGISTRY/api:prod-$GITHUB_SHA" --quiet
+          gcloud artifacts docker tags add "$PAYMENTS_IMAGE" "$REGISTRY/payments-ingress:prod-$GITHUB_SHA" --quiet
+      - name: Roll out by digest
+        run: bash deploy/gcloud/ci-rollout.sh
+        env:
+          DRY_RUN: "0"

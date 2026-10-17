@@ -16,4 +16,6 @@ Read when you need a running API (tests need no running services).
   same code on the worker: `POST /internal/maintenance/sweep` and `/cleanup` (internal auth; locally `X-Internal-Token`).
 - `SERVICE_ROLE` (default `all`): `api` mounts public routes only, `worker` only `/internal/*` and health; anything else fails at start.
 - Health: `/health` (liveness, no DB) and `/ready` (DB check, 503 when down).
+- Client IP: `TRUSTED_PROXY_HOPS` (default 1) trusts that many rightmost X-Forwarded-For entries; with no header the socket peer is used; `0` always uses the socket peer.
+- Container: the root `Dockerfile` is built in CI only (no local Docker); it needs `SERVICE_ROLE=api` or `worker` and serves on `$PORT` (8080).
 - OpenAPI spec: `IMAGEOPZ_ENV_FILE="" python scripts/generate_openapi.py` regenerates `docs/openapi.json`.

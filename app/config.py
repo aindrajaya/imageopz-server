@@ -7,7 +7,7 @@ import os
 
 from pydantic_settings import BaseSettings
 from typing import Optional, Literal
-from pydantic import field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
 
 
 class Settings(BaseSettings):
@@ -17,6 +17,12 @@ class Settings(BaseSettings):
     api_port: int = 8000
     api_workers: int = 1
     proxy_headers: bool = True
+    # Client IP (IpFingerprint): number of rightmost X-Forwarded-For entries appended by trusted proxies; the client IP
+    # is the leftmost of them. 0 = ignore the header and use the socket peer (local dev without a proxy). 1 never
+    # picks a client-supplied entry on Cloud Run; 2 matches Google's load balancer "<client-ip>,<lb-ip>" shape, but only
+    # once the run.app URL is closed (--no-default-url or internal-and-cloud-load-balancing ingress), else a direct
+    # request makes entry -2 client-supplied. Any hops > 0 is spoofable on a host with no appending proxy.
+    trusted_proxy_hops: int = Field(1, ge=0)
 
     # CORS
     # Comma-separated origins, e.g. "https://imageopz.com,https://www.imageopz.com"

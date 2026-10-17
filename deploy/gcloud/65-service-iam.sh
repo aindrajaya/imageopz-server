@@ -7,10 +7,12 @@ set -euo pipefail
 require_env_params
 
 banner "Service invoker bindings"
-# worker: only the identity whose OIDC token Cloud Tasks sends (both queues use it).
+# worker: only the identities whose OIDC tokens Cloud Tasks (both queues) and Cloud Scheduler (maintenance, Q1) send.
 # https://docs.cloud.google.com/run/docs/authenticating/service-to-service
-run gcloud run services add-iam-policy-binding "$(svc_worker)" --project="$PROJECT_ID" --region="$REGION" \
-  --member="serviceAccount:$(sa_email tasks-invoker)" --role=roles/run.invoker
+for role in tasks-invoker scheduler; do
+  run gcloud run services add-iam-policy-binding "$(svc_worker)" --project="$PROJECT_ID" --region="$REGION" \
+    --member="serviceAccount:$(sa_email "$role")" --role=roles/run.invoker
+done
 
 # api and payments are public endpoints (browser and LemonSqueezy). allUsers invoker is the documented way to allow
 # unauthenticated access; an org policy (domain restricted sharing) would block it - the project has no org (verify).

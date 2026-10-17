@@ -1,9 +1,9 @@
 # DEPLOY-PLAN - ImageOpz on Cloud Run (staging + prod)
 
-Status: owner decisions Q1-Q11 recorded 2026-10-17 (section 0); updated by T-008b1. Nothing in this plan has been
-created. Scripts: `deploy/gcloud/` (DRY_RUN=1 by default); they still reflect T-008a (Cloud Run Jobs for sweep and
-cleanup, 24 h payments retry) and are brought in line with section 0 by T-008b2. App changes: T-008b1 (route roles,
-maintenance endpoints, H1, C1, header-only sessions); Dockerfile, CI, A1, S4: T-008b2.
+Status: owner decisions Q1-Q11 recorded 2026-10-17 (section 0); updated by T-008b1 and T-008b2. Nothing in this plan
+has been created. Scripts: `deploy/gcloud/` (DRY_RUN=1 by default), in line with section 0 since T-008b2. App changes:
+T-008b1 (route roles, maintenance endpoints, H1, C1, header-only sessions); T-008b2 (Dockerfile, CI image check,
+dormant deploy workflow, TRUSTED_PROXY_HOPS, Go `/health` and `/ready`, kill switch). Open: A1, S4, SECRET_KEY scope.
 
 ## 0. Owner decisions (2026-10-17)
 | Q | Decision | Where it lands |
@@ -26,11 +26,13 @@ processing cost whatever the number of uploads; R2 lifecycle deletes `uploads/` 
 50/90/100 % of 10 USD and the kill switch. Residual risk: an attacker rotating session ids gets free conversions and
 fills the jobs queue backlog (other users wait); storage and compute spend stay bounded.
 
-Kill switch (Q8; `deploy/gcloud/95-kill-switch.sh`, T-008b2): one owner command per environment that stops spend
-without deleting anything: pause both Cloud Tasks queues (tasks are kept, up to 31 days), pause the Scheduler jobs,
-and set the api and payments services to `--ingress=internal` (public requests get 404 from Google's front end;
-LemonSqueezy webhooks fail and are retried by LemonSqueezy for a limited time, unverified, so prefer pausing the
-payments queue alone while checkout is live). `--resume` reverses each step. Trigger: a budget alert email or the
+Kill switch (Q8; `deploy/gcloud/99-kill-switch.sh stop|resume`, T-008b2): one owner command per environment that stops
+spend without deleting anything: pause both Cloud Tasks queues (tasks are kept, up to 31 days [R14]), pause the
+Scheduler jobs, and set the api and payments services to `--ingress=internal` (public requests are rejected;
+LemonSqueezy webhooks fail and are retried by LemonSqueezy for a limited time, unverified, so while checkout is live
+use `KEEP_PAYMENTS_PUBLIC=1`: events then wait in the paused payments queue). The worker cannot be set to
+max-instances 0 (the range starts at 1 [R7]); it is already internal and only the paused queues and schedules call it.
+`resume` reverses each step (staging schedules stay paused unless `PAUSE=0`). Trigger: a budget alert email or the
 J5 / queue-depth alerts.
 Inputs: ADR-001..005, registers.md (T-008 checklist, G1, S4, A1, U1-U3, U15, J1, J2, J5), T-005/T-006b/T-007 hand-offs,
 `app/config.py`, `services/payments-go/internal/config`, imageopz-ui STATE (R2 CORS for staging) at f6f19ce.
@@ -47,7 +49,7 @@ ap-northeast-1 (ADR-002 amendment). All doc URLs were read on 2026-10-16; the re
         +-----> R2 uploads    Cloud Tasks imageopz-jobs-<env> ----+
                                                                   |  run.app URL, OIDC, internal ingress
  LemonSqueezy --HTTPS--> imageopz-payments-<env> (Go ingress)     v
-                           |  CreateTask              imageopz-worker-<env>  (/internal/* only, concurrency 1)
+                           |  CreateTask              imageopz-worker-<env>  (/internal/* only, concurrency 2)
                            +--> Cloud Tasks imageopz-payments-<env> --^       |-> R2 outputs (upload), R2 uploads (read/delete)
  Cloud Scheduler --OIDC as iz-scheduler--> worker run.app URL /internal/maintenance/{sweep,cleanup} (Q1)
  CI (GitHub Actions, WIF) -> Artifact Registry imageopz -> Cloud Run Job imageopz-migrate-<env> (alembic) -> services
@@ -82,7 +84,7 @@ a week of inactivity [R20] is acceptable; restore it before a staging session.
 | | `imageopz-api-<env>` | `imageopz-worker-<env>` | `imageopz-payments-<env>` |
 |---|---|---|---|
 | Image | api@digest | api@digest | payments-ingress@digest |
-| Routes | `SERVICE_ROLE=api`: public `/api/v1/*`, `/`, `/health`, `/ready`, `/version` (no `/internal`) | `SERVICE_ROLE=worker`: `/internal/jobs/process`, `/internal/payments/events`, `/internal/maintenance/{sweep,cleanup}`, `/health`, `/ready`, `/version` | `/webhooks/lemonsqueezy`, `/healthz`, `/readyz` |
+| Routes | `SERVICE_ROLE=api`: public `/api/v1/*`, `/`, `/health`, `/ready`, `/version` (no `/internal`) | `SERVICE_ROLE=worker`: `/internal/jobs/process`, `/internal/payments/events`, `/internal/maintenance/{sweep,cleanup}`, `/health`, `/ready`, `/version` | `/webhooks/lemonsqueezy`, `/health`, `/ready` (renamed T-008b2, R1) |
 | CPU / memory | 1 / 512Mi | 2 / 4Gi (measure in staging, Q5) | 1 / 512Mi |
 | Concurrency | 20 | 2 (one image job + one payment or maintenance call; see Cloud Tasks queues) | 8 (= Go pool MaxConns) |
 | Min / max instances staging | 0 / 2 | 0 / 1 (Q5) | 0 / 1 |
@@ -103,7 +105,7 @@ max instances 100 per revision, min 0 [R7]. Images are referenced by digest [R8]
 | `imageopz-migrate-<env>` | `alembic upgrade head` (DATABASE_URL = session pooler :5432) | `iz-migrate-<env>` | 600 s / 0 | by CI before each rollout |
 
 The T-008a sweep and cleanup jobs (`imageopz-sweep-uploads-<env>`, `imageopz-cleanup-expired-<env>`, SAs `iz-sweep-<env>`,
-`iz-cleanup-<env>`) are dropped by Q1; T-008b2 removes them from `20`, `30`, `50`, `65` and `70`. 1 vCPU / 512Mi, 1 task. Task timeout default 10 min, up to 168 h; max retries 0-10, default 3 [R9].
+`iz-cleanup-<env>`) are dropped by Q1 and removed from the scripts (T-008b2). 1 vCPU / 512Mi, 1 task. Task timeout default 10 min, up to 168 h; max retries 0-10, default 3 [R9].
 
 ### Cloud Scheduler (Q1, ADR-005 amendment)
 | Scheduler job | Target (HTTP POST, worker run.app URL) | Schedule (Etc/UTC) |
@@ -174,14 +176,23 @@ concurrency 2, so the second slot stays free for a payment event or a maintenanc
 - `SERVICE_ROLE` = `api` | `worker` | `all` (implemented T-008b1; default `all` for local dev and tests; any other value
   fails settings validation, so the process does not start). `api` does not mount the internal router (`/internal/*`
   is 404). `worker` mounts only the health routes (`/health`, `/ready`, `/version`) and the internal router: no
-  public routes, no CORS, no `/docs`, `/redoc` or `/openapi.json`. The api still serves them until A1 (T-008b2);
+  public routes, no CORS, no `/docs`, `/redoc` or `/openapi.json`. The api still serves them until A1 (open);
   the internal routes are excluded from the schema. Defense in depth: the api service also runs without
   `INTERNAL_AUTH_MODE`, so even a mounted `/internal/*` would refuse every call with 401.
 - Health (H1, T-008b1): `/health` is liveness only (generic body, no DB check, never error text); `/ready` checks the
   database and answers 503 `{"status": "unavailable"}` on failure. Named `/ready`, not `/readyz`: Cloud Run reserves
   "some paths ending with `z`" and recommends "avoiding all paths that end in `z`" [R45]. The Go payments ingress
-  still serves `/healthz` and `/readyz` (registers R1, T-008b2); its probes reach the container directly, but a
-  smoke test through run.app may not.
+  serves `/health` and `/ready` too (T-008b2). Every service has a startup probe on `/ready` (`60`; [R48]); no
+  liveness probe, so a CPU-bound image job cannot get the worker restarted.
+- Client IP (T-008b2): `TRUSTED_PROXY_HOPS` (default 1) = number of rightmost `X-Forwarded-For` entries appended by
+  trusted proxies; the client IP is the leftmost of them, and anything further left is client-supplied and ignored
+  (`app/utils/security.py:IpFingerprint.client_ip`, `tests/test_client_ip.py`); 0 = socket peer. The header shape on a
+  direct run.app request is not documented; Google's load balancer documents
+  `[<supplied-value>,]<client-ip>,<load-balancer-ip>` and "does not verify any IP addresses that precede" them [R46].
+  1 never picks a client-supplied entry under either shape. Verify in staging (checklist item 15): the api logs
+  `xff_entries=<n>` (a count, no addresses) for the key paths; 1 entry without a client header means 1 is right, 2
+  means set `TRUSTED_PROXY_HOPS=2`. uvicorn runs `--proxy-headers` with its default `--forwarded-allow-ips`
+  (never `*`, which makes it take the first, spoofable entry).
 - The api's public fallback `POST /api/v1/webhooks/lemonsqueezy` stays mounted (ADR-001 rollback path); it needs
   `LEMONSQUEEZY_SECRET`.
 
@@ -195,7 +206,7 @@ concurrency 2, so the second slot stays free for a payment event or a maintenanc
 | `iz-migrate-<env>` | secretAccessor on database-url-session, secret-key |
 | `iz-scheduler-<env>` | `roles/run.invoker` on `imageopz-worker-<env>` only (Q1). Holds nothing else. |
 | Cloud Tasks service agent | serviceAccountUser on `iz-tasks-invoker-<env>` (doc conflict, see note) |
-| `iz-deployer-<env>` (CI) | `roles/iam.workloadIdentityUser` for the WIF principalSet; `roles/run.developer` on the env's 3 services and 3 jobs; `roles/artifactregistry.writer` on the repo; serviceAccountUser on the env's 6 runtime identities (deploy actAs [R22]) |
+| `iz-deployer-<env>` (CI) | `roles/iam.workloadIdentityUser` for the WIF principalSet; `roles/run.developer` on the env's 3 services and the migrate job; `roles/artifactregistry.writer` on the repo; serviceAccountUser on the env's 4 runtime identities (api, worker, payments, migrate; deploy actAs [R22]) |
 | Owner (human) | project Owner: runs the scripts, adds secret versions, sets public invoker, runs downgrades |
 
 Notes
@@ -217,6 +228,8 @@ Notes
   `attribute.repo_env = <repository_id>:<environment>`, so no other repo or provider in the pool can match. The
   workflow puts the owner approval gate on that job.
   Validate the `has(assertion.environment)` mapping on the first CI run with both an environment job and a plain job.
+- Shared repo, mutable tags: the staging deployer could also move a `prod-*` tag (artifactregistry.writer on the
+  one repo). Accepted: prod deploys by digest, and the tag only protects images from cleanup.
 - Risk to check on the first CI run: whether `run.developer` granted per service/job is enough for
   `gcloud run deploy` and `gcloud run jobs execute --wait` (operation polling, `run.executions.get`, revision reads). Fallback: project-level `roles/run.developer` on the
   deployers only (both envs; recorded deviation).
@@ -308,15 +321,20 @@ guidance [R32] is met even if every client is busy at once. The Go ingress has c
 requests never queue for a connection. The api runs concurrency 20 on a pool of 2: DB work queues inside the instance
 (30 s pool timeout) rather than at Supabase. Raising max-instances needs this table updated first.
 
-## 6. Image strategy (CI, T-008b)
-1. On push to `main` (after `pytest (sqlite)` / `pytest (postgres)` pass): build `api` (new root Dockerfile, T-008b:
-   Python 3.11, libmagic, uvicorn on `$PORT`, includes `alembic/` and `alembic.ini`) and `payments-ingress`
-   (`services/payments-go/Dockerfile`). Tag both `<git-sha>`, push to Artifact Registry, and record the digests.
-2. Staging (deployer `iz-deployer-staging`): `gcloud run jobs deploy imageopz-migrate-staging --image=<api digest>`,
-   then `gcloud run jobs execute ... --wait` [R9]. Then deploy worker, api and payments by digest (same flags as
-   `60-deploy-services.sh`, but without `--no-allow-unauthenticated`/`--allow-unauthenticated`: IAM is set once by
-   the owner, and those flags may try an IAM policy update that run.developer cannot do). Smoke test: `/health`, `/ready` and `/version` on the api,
-   `/healthz` and `/readyz` on payments (until R1 renames them; a 404 from Google's front end there is R45, not the app).
+## 6. Image strategy (CI, T-008b2; `.github/workflows/deploy.yml`, dormant until T-008c)
+0. PRs: the `image` workflow builds the root Dockerfile without pushing and smoke-tests the container (non-root, no
+   compilers, libmagic, `alembic heads`, refuses to start without `SERVICE_ROLE`, api `/health` 200 and
+   `/internal/*` 404, worker `/internal/jobs/process` 401).
+1. On push to `main`: the deploy workflow runs the backend suites (reusable `backend-tests.yml`), then builds `api`
+   (root Dockerfile: python:3.11.17-slim-trixie by digest, multi-stage venv, libmagic1t64, user 10001, uvicorn on
+   `$PORT`; `SERVICE_ROLE` must be api or worker) and `payments-ingress` once, tags both `<git-sha>`, pushes to
+   Artifact Registry and records the digests. Every job is guarded by `vars.GCP_WIF_PROVIDER != ''`; one
+   concurrency group, so deploys never overlap. Variables: deploy/gcloud/README.md "CI deploy".
+   CI swaps images only (`deploy/gcloud/ci-rollout.sh`: `gcloud run jobs|services update --image`), so flags, env,
+   secrets and IAM stay owned by `50`, `60` and `65`.
+2. Staging (deployer `iz-deployer-staging`): update the migrate job's image and `execute --wait` [R9], then api,
+   worker and payments by digest. Smoke test: `/health`, `/ready` and `/version` on the api, `/health` and `/ready`
+   on payments (the worker is internal-only).
 3. Prod (GitHub Environment `production`, owner approval, deployer `iz-deployer-prod`): the same digests are tagged
    `prod-<sha>`, which the cleanup policy keeps. The steps are migrate, wait, then the services. Nothing is rebuilt.
 4. Migrations run before the new revision serves traffic. The previous revision keeps serving during the migration,
@@ -390,6 +408,8 @@ helping users. `/internal/*` is already excluded from the schema (`tests/test_op
     a live-lease 503 is normal during duplicate deliveries.
   - jobs queue backlog: built-in `cloudtasks.googleapis.com/queue/depth` above 10 for 15 min (before the 1 h
     stale-PENDING horizon, section 2).
+  - payments queue not draining (Q9, old payment tasks): `queue/depth` above 0 for 1 h. Cloud Tasks has no task-age
+    metric [R49]; Google Cloud metrics are free [R49]. Manual check: deploy/gcloud/README.md "Old payment tasks".
   - User-defined log-based metrics are chargeable as custom metrics; the first 150 MiB per billing account is free
     [R37], and one counter is far below that.
 - Logs: 50 GiB/project/month free, then $0.50/GiB with 30 days retention included [R37]. Expected volume is well
@@ -418,8 +438,8 @@ render client-side, so their numbers come from search snippets of the official U
 | Internet egress (worker -> R2 uploads, -> Supabase) | 1 GiB free only within North America [R43] | ~2-3 GB to R2 | ~$0.30 at $0.12/GiB [R44] |
 | Total | | | ~$1.2 |
 
-Cost guards: max-instances on every service (2-3); worker concurrency 1 and jobs-queue concurrency below the worker
-max; bounded retries on both queues (section 2) and scheduler retries 0; jobs `--max-retries` 0/1 and task timeouts;
+Cost guards: max-instances on every service (worker 1, api 2-3, payments 1-2); worker concurrency 2 and jobs-queue
+concurrency 1; bounded retries on both queues (section 2) and scheduler retries 0; jobs `--max-retries` 0/1 and task timeouts;
 min-instances 0 everywhere; request-based billing for services; staging schedules paused; Artifact Registry cleanup
 policy; 10 USD budget alerts and the kill switch (section 0). The largest variable is now worker cold starts on the
 5-min sweep; check it in the first billing report (item 23).
@@ -427,7 +447,7 @@ policy; 10 USD budget alerts and the kill switch (section 0). The largest variab
 ## 11. Go-live checklist (BLOCKER = must be done before prod traffic)
 | # | Item | Owner/task |
 |---|---|---|
-| 1 | BLOCKER: Python Dockerfile (none exists today) and the CI build/push/deploy workflow (section 6) | T-008b |
+| 1 | BLOCKER: Python Dockerfile and CI build check (DONE T-008b2, built only in CI so far); deploy workflow dormant until its variables exist and its first run (section 6) | T-008c |
 | 2 | BLOCKER: U15 replace the account-wide outputs token with one scoped to `imageopz`, revoke the old one, re-run the scope check | owner |
 | 3 | BLOCKER: queues created with the J3 retry config (`40-queues.sh`) | owner (scripts) |
 | 4 | BLOCKER: Scheduler -> `/internal/maintenance/{sweep,cleanup}` created and observed answering 200 once in each env (U2, Q1) | owner (scripts, T-008b2) |
@@ -441,7 +461,7 @@ policy; 10 USD budget alerts and the kill switch (section 0). The largest variab
 | 12 | `SERVICE_ROLE` route split (DONE T-008b1); `EXPOSE_API_DOCS` (A1); SECRET_KEY check scoped to the api | T-008b2 |
 | 13 | S4: cache Google OIDC certs in `app/utils/internal_auth.py` | T-008b |
 | 14 | DONE T-008b1 (H1): `/health` generic liveness, `/ready` DB check with 503 generic body (renamed from `/readyz`, R45) | - |
-| 15 | X-Forwarded-For: confirm in staging what Cloud Run puts in XFF (`IpFingerprint` takes the first entry, spoofable); fix before relying on IP for quotas (T-002 risk, U1) | T-008b |
+| 15 | X-Forwarded-For: rule fixed in T-008b2 (`TRUSTED_PROXY_HOPS`, default 1, section 3); confirm the run.app header shape in staging from `xff_entries` and adjust the hops | owner + T-008c |
 | 16 | U1: risk accepted with cheap bounds (Q6, section 0); no limiter at go-live | owner (decided 2026-10-17) |
 | 17 | Budget + notification channel + alert policies (`90-observability.sh`); each policy seen firing once in staging (forced error, failed job) | owner |
 | 18 | WIF deployers (`80-wif.sh`) and the GitHub Environment `production` with the owner as required reviewer | owner |
@@ -544,5 +564,10 @@ Answered 2026-10-17; decisions in section 0. The original questions are kept bel
 - [R43] Cloud Run egress allowance: https://docs.cloud.google.com/run/docs/jobs-cost-optimization
 - [R44] Network pricing: https://cloud.google.com/vpc/network-pricing (snippet)
 - [R45] Cloud Run known issues, "Reserved URL paths": https://docs.cloud.google.com/run/docs/known-issues
+- [R46] Load balancer X-Forwarded-For (read 2026-10-17): https://docs.cloud.google.com/load-balancing/docs/https ; Cloud Run container contract (no XFF text): https://docs.cloud.google.com/run/docs/container-contract
+- [R47] Kill switch: https://docs.cloud.google.com/sdk/gcloud/reference/tasks/queues/pause , https://docs.cloud.google.com/sdk/gcloud/reference/scheduler/jobs/pause , https://docs.cloud.google.com/run/docs/configuring/services/manual-scaling , https://docs.cloud.google.com/sdk/gcloud/reference/run/services/update
+- [R48] Health checks (startup probe syntax): https://docs.cloud.google.com/run/docs/configuring/healthchecks
+- [R49] Cloud Tasks metrics: https://docs.cloud.google.com/monitoring/api/metrics_gcp_c ; metric pricing: https://docs.cloud.google.com/stackdriver/pricing
+- [R50] Scheduler OIDC flags and attempt deadline [15 s, 30 min]: https://docs.cloud.google.com/sdk/gcloud/reference/scheduler/jobs/create/http , https://docs.cloud.google.com/scheduler/docs/reference/rest/v1/projects.locations.jobs
 "(snippet)": the page renders client-side; the figure came from a search snippet of that official URL and should be
 rechecked on the live page or in the pricing calculator.

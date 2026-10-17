@@ -1,0 +1,33 @@
+# Build context for the root Dockerfile (Python api/worker/migrate image). The Dockerfile copies only requirements.txt,
+# app/, alembic/ and alembic.ini; this list keeps secrets, local state and unrelated trees out of the context anyway.
+.env
+.env.*
+**/.env
+**/.env.*
+*.db
+*.db-*
+**/*.db
+**/*.db-*
+.git
+.github
+.gitignore
+.venv
+**/__pycache__
+**/*.pyc
+.pytest_cache
+node_modules
+**/node_modules
+tests
+docs
+services
+deploy
+issues
+scripts
+tmp
+*.bak
+*.md
+ci-convert.py
+run.py
+claude-code.result.md
+.DS_Store
+.vscode
