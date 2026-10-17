@@ -64,25 +64,23 @@ banner() {
 
 # --- Naming (single project, environment-suffixed resources; DEPLOY-PLAN.md "Resource inventory") ---------------
 AR_REPO="imageopz"                       # shared by both environments: the same digest is promoted staging -> prod
-API_IMAGE_NAME="api"                     # Python image: api, worker and the three jobs
+API_IMAGE_NAME="api"                     # Python image (root Dockerfile): api, worker and the migrate job
 PAYMENTS_IMAGE_NAME="payments-ingress"   # Go image
 
 svc_api()      { echo "imageopz-api-${ENV}"; }
 svc_worker()   { echo "imageopz-worker-${ENV}"; }
 svc_payments() { echo "imageopz-payments-${ENV}"; }
 
-job_migrate() { echo "imageopz-migrate-${ENV}"; }
-job_sweep()   { echo "imageopz-sweep-uploads-${ENV}"; }
-job_cleanup() { echo "imageopz-cleanup-expired-${ENV}"; }
+job_migrate() { echo "imageopz-migrate-${ENV}"; }   # the only Cloud Run Job (Q1: sweep/cleanup run on the worker)
 
 queue_jobs()     { echo "imageopz-jobs-${ENV}"; }
 queue_payments() { echo "imageopz-payments-${ENV}"; }
 
-sched_sweep()   { echo "imageopz-sweep-uploads-${ENV}"; }
-sched_cleanup() { echo "imageopz-cleanup-expired-${ENV}"; }
+sched_sweep()   { echo "imageopz-sweep-uploads-${ENV}"; }     # -> worker POST /internal/maintenance/sweep
+sched_cleanup() { echo "imageopz-cleanup-expired-${ENV}"; }   # -> worker POST /internal/maintenance/cleanup
 
 # Service account ids (6-30 chars). One identity per service/job; see DEPLOY-PLAN.md "IAM matrix".
-sa_id() { echo "iz-$1-${ENV}"; }   # sa_id api|worker|payments|tasks-invoker|migrate|sweep|cleanup|scheduler
+sa_id() { echo "iz-$1-${ENV}"; }   # sa_id api|worker|payments|tasks-invoker|migrate|scheduler
 sa_email() { echo "$(sa_id "$1")@${PROJECT_ID}.iam.gserviceaccount.com"; }
 
 # Secret Manager secret ids per environment; DEPLOY-PLAN.md "Secrets".
@@ -104,13 +102,12 @@ project_number() {
 run_url() { echo "https://$1-$(project_number).${REGION}.run.app"; }
 
 # --- Sizing per environment (DEPLOY-PLAN.md "Resource inventory" and "DB pool sizing (G1)") -----------------------
-# Jobs queue dispatches stay one below the worker's max instances, so a payments delivery always finds a free
-# worker instance (worker concurrency is 1).
+# Q5 (owner, 2026-10-17): worker max-instances 1 and concurrency 2 in both environments; the jobs queue dispatches one
+# image job at a time, so the second worker slot stays free for a payment event or a maintenance call.
 if [ "$ENV" = "prod" ]; then
-  API_MAX=3; WORKER_MAX=3; PAYMENTS_MAX=2
+  API_MAX=3; PAYMENTS_MAX=2
 else
-  API_MAX=2; WORKER_MAX=2; PAYMENTS_MAX=1
+  API_MAX=2; PAYMENTS_MAX=1
 fi
-JOBS_QUEUE_CONCURRENCY=$((WORKER_MAX - 1))
 # shellcheck disable=SC2034  # read by the sourcing scripts
-PAYMENTS_QUEUE_CONCURRENCY=1
+WORKER_MAX=1; WORKER_CONCURRENCY=2; JOBS_QUEUE_CONCURRENCY=1; PAYMENTS_QUEUE_CONCURRENCY=1

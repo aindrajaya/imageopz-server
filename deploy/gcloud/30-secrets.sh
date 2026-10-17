@@ -11,16 +11,17 @@ set -euo pipefail
 require_env_params
 
 # name:consumer roles (space-separated). Keep in sync with DEPLOY-PLAN.md "Secrets".
-# secret-key is needed by every Python process that runs with ENVIRONMENT=production (config validator); T-008b
-# narrows it to the api (see the plan). Staging uses the same consumers so both environments behave alike.
+# secret-key is needed by every Python process that runs with ENVIRONMENT=production (config validator), so the worker
+# and migrate read it too until the SECRET_KEY scope change (DEPLOY-PLAN.md section 5). Staging uses the same consumers.
+# The worker runs the scheduled sweep (uploads bucket) and cleanup (outputs bucket) since Q1.
 SECRETS="
-database-url:api,worker,payments,sweep,cleanup
+database-url:api,worker,payments
 database-url-session:migrate
-secret-key:api,worker,sweep,cleanup,migrate
-r2-outputs-access-key-id:worker,cleanup
-r2-outputs-secret-access-key:worker,cleanup
-r2-uploads-access-key-id:api,worker,sweep
-r2-uploads-secret-access-key:api,worker,sweep
+secret-key:api,worker,migrate
+r2-outputs-access-key-id:worker
+r2-outputs-secret-access-key:worker
+r2-uploads-access-key-id:api,worker
+r2-uploads-secret-access-key:api,worker
 lemonsqueezy-signing-secret:api,payments
 lemonsqueezy-api-key:api
 "

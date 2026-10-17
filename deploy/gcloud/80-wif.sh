@@ -8,7 +8,7 @@
 #   for federated principals: https://docs.cloud.google.com/iam/docs/federated-identity-supported-services).
 #   prod's deployer is only reachable from a workflow job bound to the GitHub Environment "production" (owner
 #   approval gate in the workflow, T-008b).
-# - Deployer roles are resource-scoped: run.developer on the ENV's services and jobs (they must exist: run 50 and 60
+# - Deployer roles are resource-scoped: run.developer on the ENV's services and migrate job (they must exist: run 50 and 60
 #   first), artifactregistry.writer on the repo, serviceAccountUser on the ENV's runtime identities only.
 #
 # Usage: PROJECT_ID=... REGION=... ENV=staging|prod [DRY_RUN=0] \
@@ -76,13 +76,11 @@ for svc in "$(svc_api)" "$(svc_worker)" "$(svc_payments)"; do
 done
 # run.developer on the jobs also covers executing the migrate job (run.jobs.run). It ALSO includes
 # run.jobs.runWithOverrides and delete (accepted risk, DEPLOY-PLAN.md section 4; hardening: custom role, T-008b).
-for job in "$(job_migrate)" "$(job_sweep)" "$(job_cleanup)"; do
-  run gcloud run jobs add-iam-policy-binding "$job" --project="$PROJECT_ID" --region="$REGION" \
-    --member="serviceAccount:${DEPLOYER}" --role=roles/run.developer
-done
+run gcloud run jobs add-iam-policy-binding "$(job_migrate)" --project="$PROJECT_ID" --region="$REGION" \
+  --member="serviceAccount:${DEPLOYER}" --role=roles/run.developer
 # actAs: deploying a revision that runs as another identity needs Service Account User on that identity
 # (https://docs.cloud.google.com/run/docs/deploying).
-for role in api worker payments migrate sweep cleanup; do
+for role in api worker payments migrate; do
   run gcloud iam service-accounts add-iam-policy-binding "$(sa_email "$role")" --project="$PROJECT_ID" \
     --member="serviceAccount:${DEPLOYER}" --role=roles/iam.serviceAccountUser
 done

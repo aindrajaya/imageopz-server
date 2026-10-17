@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 90 - Budget, one log-based metric and alert policies for ENV (DEPLOY-PLAN.md "Observability").
 # Only free-tier-friendly signals: log-match alert policies (no metric needed), one user-defined counter (J5), and
-# the built-in Cloud Tasks queue depth metric. Alerting is not charged before 2027-09-01
+# the built-in Cloud Tasks queue depth metric (jobs backlog, payments not draining). Alerting is not charged before 2027-09-01
 # (https://cloud.google.com/products/observability/pricing).
 # Budget: project-scoped, alerts only ("doesn't automatically cap ... spending":
 # https://docs.cloud.google.com/billing/docs/how-to/budgets). Created once (ENV=prod run) with BILLING_ACCOUNT.
@@ -54,7 +54,7 @@ YAML
     "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"${PAYMENTS}\" AND httpRequest.status>=500"
   log_policy "$TMPDIR_POL/app-errors.yaml" "imageopz ${ENV}: application ERROR logs (api, worker)" \
     "resource.type=\"cloud_run_revision\" AND (resource.labels.service_name=\"${API}\" OR resource.labels.service_name=\"${WORKER}\") AND (severity>=ERROR OR textPayload=~\" - ERROR - \")"
-  log_policy "$TMPDIR_POL/jobs.yaml" "imageopz ${ENV}: scheduled/migrate job error" \
+  log_policy "$TMPDIR_POL/jobs.yaml" "imageopz ${ENV}: migrate job error" \
     "resource.type=\"cloud_run_job\" AND resource.labels.job_name=~\"^imageopz-.*-${ENV}\$\" AND (severity>=ERROR OR textPayload=~\" - ERROR - \")"
 
   # Metric threshold policies: J5 burst, and a jobs backlog that does not drain.
@@ -86,6 +86,26 @@ conditions:
     comparison: COMPARISON_GT
     thresholdValue: 10
     duration: 900s
+YAML
+
+  # Old payment tasks (Q9): Cloud Tasks has no "oldest task age" metric (the cloudtasks metrics are api/request_count,
+  # queue/depth, queue/task_attempt_count, queue/task_attempt_delays: https://docs.cloud.google.com/monitoring/api/metrics_gcp_c).
+  # A healthy payments queue drains in seconds, so any task still queued after 1 h is retrying; alert long before the
+  # 7-day retry limit. Google Cloud metrics are free ("Metric data from Google Cloud ... isn't chargeable":
+  # https://docs.cloud.google.com/stackdriver/pricing). Manual check: README "Old payment tasks".
+  cat > "$TMPDIR_POL/payments-queue-age.yaml" <<YAML
+displayName: "imageopz ${ENV}: payments queue not draining"
+combiner: OR
+conditions:
+- displayName: "payments queue depth > 0 for 1 h"
+  conditionThreshold:
+    filter: 'metric.type="cloudtasks.googleapis.com/queue/depth" AND resource.type="cloud_tasks_queue" AND resource.labels.queue_id="$(queue_payments)"'
+    aggregations:
+    - alignmentPeriod: 300s
+      perSeriesAligner: ALIGN_MIN
+    comparison: COMPARISON_GT
+    thresholdValue: 0
+    duration: 3600s
 YAML
 
   banner "Alert policies (skipped when a policy with the same display name exists)"
