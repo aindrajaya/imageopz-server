@@ -13,8 +13,8 @@ HEAD 3cd8057 = STATE baseline after the T-008b1 merge. SQLite 171 passed / 13 sk
 throwaway cluster on 5433) 184 passed: the T-008b1 amendment numbers.
 
 ## Handoff
-Commits (branch, local): 3faacc6 app + image + CI + Go rename, 8f427df scripts, 42d01ab docs, then one review-fix
-commit and one records commit (this file, STATE.md).
+Commits (branch, local): 3faacc6 app + image + CI + Go rename, 8f427df scripts, 42d01ab docs; review fixes 956314a
+(app/CI) and dd83e43 (scripts); records 7bbdcea (this file, STATE.md).
 
 ### 1. /ready
 Python already served `/ready` (T-008b1 amendment, in 3cd8057). Done here: the Go ingress (`/health`, `/ready`;
