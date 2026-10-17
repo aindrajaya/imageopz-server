@@ -38,7 +38,7 @@ def _set_session_cookie(response: Response, session_id: str) -> None:
         max_age=max_age_seconds,
         httponly=False,
         samesite="lax",
-        secure=(settings.environment == "production"),
+        secure=settings.session_cookie_secure(),
         path="/",
     )
 
@@ -50,7 +50,7 @@ def _clear_session_cookie(response: Response) -> None:
         expires=0,
         httponly=False,
         samesite="lax",
-        secure=(settings.environment == "production"),
+        secure=settings.session_cookie_secure(),
         path="/",
     )
 

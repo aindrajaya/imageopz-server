@@ -35,14 +35,14 @@ def get_session_id_from_request(
 
 def set_session_cookie(response: Response, session_id: str) -> None:
     max_age_seconds = int(settings.session_cookie_max_age_days) * 24 * 60 * 60
-    # SameSite=Lax so it survives normal navigations; Secure should be true behind HTTPS (prod).
+    # SameSite=Lax so it survives normal navigations; Secure everywhere except local development (C1).
     response.set_cookie(
         key=settings.session_cookie_name,
         value=session_id,
         max_age=max_age_seconds,
         httponly=False,  # frontend may need to read it; can be true if you only use header
         samesite="lax",
-        secure=(settings.environment == "production"),
+        secure=settings.session_cookie_secure(),
         path="/",
     )
 

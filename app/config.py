@@ -119,6 +119,10 @@ class Settings(BaseSettings):
     # Environment
     environment: Literal["development", "staging", "production"] = "development"
 
+    # Which routes this process mounts (DEPLOY-PLAN section 3): "api" = public routes only, "worker" = /internal/* and
+    # health only, "all" = both (local dev and tests). Any other value fails validation, so the process does not start.
+    service_role: Literal["api", "worker", "all"] = "all"
+
     class Config:
         # IMAGEOPZ_ENV_FILE="" disables .env loading (tests/conftest.py); environment variables still apply.
         env_file = os.environ.get("IMAGEOPZ_ENV_FILE", ".env") or None
@@ -139,6 +143,15 @@ class Settings(BaseSettings):
             if v in {"0", "false", "no", "n", "off", "release", "production", "prod"}:
                 return False
         return value
+
+    @field_validator("service_role", mode="before")
+    @classmethod
+    def _normalize_service_role(cls, value):
+        return value.strip().lower() if isinstance(value, str) else value
+
+    def session_cookie_secure(self) -> bool:
+        """Every deployed environment is served over HTTPS; only local development uses plain http (C1)."""
+        return self.environment != "development"
 
     def sqlalchemy_database_url(self) -> str:
         """DATABASE_URL with bare postgres(ql):// mapped to the psycopg3 driver."""
