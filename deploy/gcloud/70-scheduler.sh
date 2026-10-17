@@ -37,10 +37,10 @@ ensure_schedule() {
     --attempt-deadline=300s --max-retry-attempts=0 \
     --description="imageopz ${ENV}: POST ${path} on the worker"
   if [ "$PAUSE" = "1" ]; then
-    run gcloud scheduler jobs pause "$name" --project="$PROJECT_ID" --location="$REGION"
+    set_paused scheduler "$name" pause
   elif [ "$verb" = "update" ]; then
     # An existing job may have been paused by hand, a staging run or the kill switch; PAUSE=0 resumes it.
-    run gcloud scheduler jobs resume "$name" --project="$PROJECT_ID" --location="$REGION"
+    set_paused scheduler "$name" resume
   fi
 }
 

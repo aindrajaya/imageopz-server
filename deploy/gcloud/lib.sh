@@ -111,3 +111,22 @@ else
 fi
 # shellcheck disable=SC2034  # read by the sourcing scripts
 WORKER_MAX=1; WORKER_CONCURRENCY=2; JOBS_QUEUE_CONCURRENCY=1; PAYMENTS_QUEUE_CONCURRENCY=1
+
+# set_paused scheduler|queue NAME pause|resume: pause or resume a Cloud Scheduler job or Cloud Tasks queue only when
+# its state calls for it, so re-runs are idempotent. Scheduler refuses otherwise ("A job must be in
+# Job.State.ENABLED to be paused": https://docs.cloud.google.com/scheduler/docs/reference/rest/v1/projects.locations.jobs/pause).
+# A missing resource is reported and skipped (the kill switch must reach its later steps).
+set_paused() {
+  local kind="$1" name="$2" verb="$3" group state ready
+  if [ "$kind" = "scheduler" ]; then group="scheduler jobs"; ready=ENABLED; else group="tasks queues"; ready=RUNNING; fi
+  if [ "$DRY_RUN" = "0" ]; then
+    # shellcheck disable=SC2086  # group is "scheduler jobs" or "tasks queues"
+    state="$(gcloud $group describe "$name" --project="$PROJECT_ID" --location="$REGION" --format='value(state)' 2>/dev/null)" || state=MISSING
+    if { [ "$verb" = "pause" ] && [ "$state" != "$ready" ]; } || { [ "$verb" = "resume" ] && [ "$state" != "PAUSED" ]; }; then
+      echo "# $name is ${state:-unknown}: $verb skipped"
+      return 0
+    fi
+  fi
+  # shellcheck disable=SC2086
+  run gcloud $group "$verb" "$name" --project="$PROJECT_ID" --location="$REGION"
+}

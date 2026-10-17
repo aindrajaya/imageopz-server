@@ -99,7 +99,8 @@ API_ENV="$TMPDIR_ENV/api.yaml"
   yaml_kv EXPOSE_API_DOCS "$([ "$ENV" = prod ] && echo false || echo true)"   # A1, T-008b
   # Rightmost X-Forwarded-For entry = the address Google's front end appended; the run.app header shape is not
   # documented, so verify in staging (xff_entries in the request log, checklist item 15) and set 2 if it is
-  # "<client>,<front-end>" (app/config.py:trusted_proxy_hops).
+  # "<client>,<front-end>" (app/config.py:trusted_proxy_hops). Behind a load balancer, 2 is safe only with the run.app
+  # URL closed (--no-default-url or internal-and-cloud-load-balancing ingress).
   yaml_kv TRUSTED_PROXY_HOPS 1
   yaml_kv CORS_ALLOW_ORIGINS "$UI_ORIGINS"
   yaml_kv CORS_ALLOW_CREDENTIALS true
