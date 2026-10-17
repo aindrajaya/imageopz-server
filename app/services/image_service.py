@@ -11,6 +11,7 @@ from typing import Tuple, Optional
 from PIL import Image
 import pillow_avif  # noqa - registers AVIF codec
 import boto3
+from botocore.config import Config
 from botocore.exceptions import ClientError
 
 from app.config import settings
@@ -72,7 +73,7 @@ class ImageOptimizer:
 
 
 class R2Storage:
-    """Handles uploads and downloads from Cloudflare R2"""
+    """Outputs bucket (private): the worker uploads results, the API signs short-lived GETs (T-008c2, D1)."""
     
     def __init__(self):
         """Initialize S3 client for Cloudflare R2"""
@@ -93,7 +94,8 @@ class R2Storage:
             endpoint_url=f"https://{settings.r2_account_id}.r2.cloudflarestorage.com",
             aws_access_key_id=settings.r2_access_key_id,
             aws_secret_access_key=settings.r2_secret_access_key,
-            region_name="auto"
+            region_name="auto",
+            config=Config(signature_version="s3v4"),
         )
     
     def upload_optimized_image(
@@ -111,14 +113,14 @@ class R2Storage:
             job_id: Job ID for unique key generation
         
         Returns:
-            Tuple of (success, object_key, public_url)
+            Tuple of (success, object_key, error_message); error_message is None on success.
+            No URL: downloads are presigned per request (presign_get).
         """
         try:
             if not self.s3_client:
                 self._init_client()
             
             # Generate object key with job ID
-            ext = original_filename.split(".")[-1].lower()
             object_key = f"optimized/{job_id}.avif"
             
             # Upload to R2
@@ -132,11 +134,8 @@ class R2Storage:
                     "job-id": job_id
                 }
             )
-            
-            # Construct public URL
-            public_url = f"{settings.r2_custom_domain}/{object_key}"
-            
-            return True, object_key, public_url
+
+            return True, object_key, None
         
         except ClientError as e:
             error_msg = f"R2 upload failed: {str(e)}"
@@ -145,6 +144,16 @@ class R2Storage:
             error_msg = f"Unexpected error uploading to R2: {str(e)}"
             return False, None, error_msg
     
+    def presign_get(self, object_key: str, expires_in: int) -> str:
+        """Short-lived GET URL for one output object (computed locally, no request to R2)."""
+        if not self.s3_client:
+            self._init_client()
+        return self.s3_client.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": settings.r2_bucket_name, "Key": object_key},
+            ExpiresIn=expires_in,
+        )
+
     def delete_optimized_image(self, object_key: str) -> bool:
         """
         Delete image from Cloudflare R2.

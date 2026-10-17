@@ -52,6 +52,7 @@ Shared agent memory (CLAUDE.md is a symlink to this file). Every rule carries a 
 - 2026-10-15 - Verify ruleset/required-check names against real check-run names - a placeholder blocks every PR.
 - 2026-10-15 - Never assert the order of items processed in sorted-id order; UUIDs are random, so the test is flaky in CI.
 - 2026-10-17 - Run Alembic only with `IMAGEOPZ_ENV_FILE=""` and `-x url=<throwaway db>` - without them env.py reads settings, which load .env and its database.
+- 2026-10-17 - Never run two agent sessions in one working tree; use git worktree - concurrent sessions overwrite each other's edits.
 
 ## Runbooks (docs/engineering/runbooks/)
 - local-run.md - start the API and worker locally, regenerate the OpenAPI spec

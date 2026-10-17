@@ -4,7 +4,8 @@ Status: owner decisions Q1-Q11 recorded 2026-10-17 (section 0); updated by T-008
 has been created. Scripts: `deploy/gcloud/` (DRY_RUN=1 by default), in line with section 0 since T-008b2. App changes:
 T-008b1 (route roles, maintenance endpoints, H1, C1, header-only sessions); T-008b2 (Dockerfile, CI image check,
 dormant deploy workflow, TRUSTED_PROXY_HOPS, Go `/health` and `/ready`, kill switch); T-008c1 (bootstrap: `80`
-stages, `build_only` dispatch, `60` digest fallback and `TRUSTED_PROXY_HOPS` parameter). Open: A1, S4, SECRET_KEY scope.
+stages, `build_only` dispatch, `60` digest fallback and `TRUSTED_PROXY_HOPS` parameter); T-008c2 (private outputs
+buckets, presigned download URLs from `/status`, decision D1 in section 7). Open: A1, S4, SECRET_KEY scope.
 
 ## 0. Owner decisions (2026-10-17)
 | Q | Decision | Where it lands |
@@ -200,7 +201,7 @@ concurrency 2, so the second slot stays free for a payment event or a maintenanc
 ## 4. IAM matrix (per environment; no service-account keys anywhere)
 | Identity | Grants (all resource-scoped) |
 |---|---|
-| `iz-api-<env>` | secretAccessor on database-url, secret-key, r2-uploads-access-key-id, r2-uploads-secret-access-key, lemonsqueezy-signing-secret, lemonsqueezy-api-key; `roles/cloudtasks.enqueuer` on the jobs queue; `roles/iam.serviceAccountUser` on `iz-tasks-invoker-<env>` (OIDC actAs [R19]) |
+| `iz-api-<env>` | secretAccessor on database-url, secret-key, r2-outputs-access-key-id, r2-outputs-secret-access-key (signs download URLs, T-008c2), r2-uploads-access-key-id, r2-uploads-secret-access-key, lemonsqueezy-signing-secret, lemonsqueezy-api-key; `roles/cloudtasks.enqueuer` on the jobs queue; `roles/iam.serviceAccountUser` on `iz-tasks-invoker-<env>` (OIDC actAs [R19]) |
 | `iz-worker-<env>` | secretAccessor on database-url, secret-key, r2-outputs-*, r2-uploads-*; enqueuer on the jobs queue and serviceAccountUser on `iz-tasks-invoker-<env>` (the sweep re-enqueues stale jobs, Q1) |
 | `iz-payments-<env>` | secretAccessor on database-url, lemonsqueezy-signing-secret; enqueuer on the payments queue; serviceAccountUser on `iz-tasks-invoker-<env>` |
 | `iz-tasks-invoker-<env>` | `roles/run.invoker` on `imageopz-worker-<env>` only. Holds nothing else. |
@@ -259,7 +260,7 @@ Notes
 | database-url | `DATABASE_URL` (transaction pooler :6543, table-owner role) | api, worker, payments |
 | database-url-session | `DATABASE_URL` (session pooler :5432, table-owner role) | migrate |
 | secret-key | `SECRET_KEY` | api; also worker and migrate until the SECRET_KEY scope change (T-008b2, see below) |
-| r2-outputs-access-key-id / r2-outputs-secret-access-key | `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` | worker |
+| r2-outputs-access-key-id / r2-outputs-secret-access-key | `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` | worker (writes results, cleanup deletes); api (signs download URLs locally, never calls the bucket; T-008c2) |
 | r2-uploads-access-key-id / r2-uploads-secret-access-key | `R2_UPLOADS_ACCESS_KEY_ID` / `R2_UPLOADS_SECRET_ACCESS_KEY` | api, worker |
 | lemonsqueezy-signing-secret | `LEMONSQUEEZY_SECRET` (api), `LEMONSQUEEZY_SIGNING_SECRET` (Go) | api (fallback route), payments |
 | lemonsqueezy-api-key | `LEMONSQUEEZY_API_KEY` | api |
@@ -296,7 +297,8 @@ principal access to other secrets" [R27]); one location, because user-managed re
 | `JOB_LEASE_SECONDS` / `JOB_STALE_PENDING_SECONDS` | 1800 / 3600 (see section 2) | same | worker |
 | `INTERNAL_AUTH_MODE` / `_AUDIENCE` / `_ALLOWED_EMAILS` | oidc / worker URL / `iz-tasks-invoker-<env>` and `iz-scheduler-<env>` emails | same | worker only |
 | `R2_ACCOUNT_ID` | owner | owner | api, worker |
-| `R2_BUCKET_NAME`, `R2_CUSTOM_DOMAIN` | `imageopz-staging` (Q4) | `imageopz` | worker |
+| `R2_BUCKET_NAME` (outputs; `R2_CUSTOM_DOMAIN` removed in T-008c2) | `imageopz-staging` (Q4) | `imageopz` | api, worker |
+| `R2_OUTPUT_URL_TTL_SECONDS` | default 900 (not set by the scripts) | same | api |
 | `R2_UPLOADS_BUCKET` | `imageopz-uploads-staging` (Q4) | `imageopz-uploads` | api, worker |
 | `SUPABASE_JWKS_URL`, `_JWT_ISSUER`, `_AUTH_URL`, `_ANON_KEY`, `_JWT_AUDIENCE=authenticated` | staging Supabase project | prod project | api |
 | `LEMONSQUEEZY_STORE_ID`, `_VARIANT_ID`, `_REDIRECT_URL` | test-mode store | live store | api |
@@ -376,6 +378,16 @@ jobs.
 - `CORS_ALLOW_ORIGINS`: prod = the prod UI origin(s) only (`https://imageopz.aindrajaya.my.id` per the uploads contract;
   confirm, Q3); staging = the stable staging UI origin. Never Vercel preview URLs (one per commit) and never `*`
   (rejected in production by the config validator).
+- Outputs (decision D1, owner 2026-10-17; T-008c2): both outputs buckets (`imageopz-staging`, `imageopz`) are
+  private. No r2.dev public development URL, no R2 custom domain, so output serving needs no DNS and no public bucket.
+  `GET /api/v1/status/{job_id}` returns in `r2_url` a presigned SigV4 GET on the S3 endpoint
+  (`https://<account>.r2.cloudflarestorage.com/<bucket>/optimized/<job_id>.avif?X-Amz-...`), valid
+  `R2_OUTPUT_URL_TTL_SECONDS` (900 s), signed fresh on every request, only for the job's owner (Supabase account, or the
+  session id that uploaded it; others get `null`), only while the job is DONE and not expired; the response is
+  `Cache-Control: no-store`. The worker stores only `r2_object_key` (`r2_url` column deprecated). Signing is a local
+  computation with the outputs token, so the api holds that token but makes no R2 call per `/status`. The UI opens the
+  link with `window.open`, a navigation, so the outputs bucket needs no CORS rule. UI follow-up (registers UI2):
+  refresh links via `/status` before opening, since they expire after 15 min.
 - R2 uploads bucket CORS (dashboard JSON or `wrangler r2 bucket cors set` [R35]): methods `PUT, GET`, header
   `content-type`, max-age 3600. The prod bucket allows the prod origin only (drop `localhost:3000` once staging has
   its own bucket). The staging bucket allows the staging origin and `http://localhost:3000`. Propagation can take up
@@ -456,7 +468,8 @@ policy; 10 USD budget alerts and the kill switch (section 0). The largest variab
 | # | Item | Owner/task |
 |---|---|---|
 | 1 | BLOCKER: Python Dockerfile and CI build check (DONE T-008b2, built only in CI so far); deploy workflow dormant until its variables exist and its first run (section 6) | T-008c |
-| 2 | BLOCKER: U15 replace the account-wide outputs token with one scoped to `imageopz`, revoke the old one, re-run the scope check | owner |
+| 2 | BLOCKER: U15 outputs token scoped per environment (prod: only `imageopz`; staging: only `imageopz-staging`), Object Read & Write; revoke the account-wide token, re-run the scope check. Since T-008c2 the api also holds it (signing), so its scope bounds what a leaked api secret can reach | owner |
+| 2b | BLOCKER: outputs buckets private in both envs (r2.dev disabled, no custom domain; D1, section 7) | owner (Cloudflare) |
 | 3 | BLOCKER: queues created with the J3 retry config (`40-queues.sh`) | owner (scripts) |
 | 4 | BLOCKER: Scheduler -> `/internal/maintenance/{sweep,cleanup}` created and observed answering 200 once in each env (U2, Q1) | owner (scripts, T-008b2) |
 | 5 | BLOCKER: `alembic upgrade head` via `imageopz-migrate-<env>` (session pooler, table owner); `tests/test_rls_deny_all.py` intent checked on Supabase (RLS on every table); Data API does not expose `payments` | owner |

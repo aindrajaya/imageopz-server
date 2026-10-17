@@ -45,7 +45,10 @@ class Settings(BaseSettings):
     r2_access_key_id: Optional[str] = None
     r2_secret_access_key: Optional[str] = None
     r2_bucket_name: str = "imageopz"
-    r2_custom_domain: str = "https://your-domain.r2.dev"
+    # Outputs bucket is private: GET /status signs a download URL valid this long for DONE jobs (T-008c2, D1)
+    r2_output_url_ttl_seconds: int = 900
+    # Deprecated and unused since T-008c2 (no public outputs URL); kept so existing env files still load
+    r2_custom_domain: Optional[str] = None
 
     # Cloudflare R2 uploads bucket (browser -> R2 via presigned PUT; S3 endpoint only). Its own scoped token:
     # without R2_UPLOADS_* the upload endpoints return 503; the outputs-bucket credentials are never used.

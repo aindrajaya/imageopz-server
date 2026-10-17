@@ -39,7 +39,11 @@ class JobStatusResponse(BaseModel):
     )
     
     # Download info (available when status is 'done')
-    r2_url: Optional[str] = Field(None, description="Cloudflare R2 download URL")
+    r2_url: Optional[str] = Field(
+        None,
+        description="Short-lived presigned download URL (R2_OUTPUT_URL_TTL_SECONDS, default 900 s), fresh on every "
+        "request; only for the job's owner while the job is done and not expired. Poll /status again for a new one.",
+    )
 
     # Kept for response compatibility; always null since the queue-side progress store was removed (T-007)
     progress: Optional[float] = Field(None, description="Deprecated, always null")
@@ -67,7 +71,7 @@ class JobStatusResponse(BaseModel):
                 "original_height": 1080,
                 "optimized_size": 2097152,
                 "compression_ratio": 0.4,
-                "r2_url": "https://cdn.example.com/optimized/550e8400-e29b-41d4-a716-446655440000.avif",
+                "r2_url": "https://<account>.r2.cloudflarestorage.com/imageopz/optimized/550e8400-e29b-41d4-a716-446655440000.avif?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Expires=900&X-Amz-Signature=...",
                 "error_message": None,
                 "created_at": "2024-01-15T10:30:00Z",
                 "expiry_date": "2024-01-22T10:30:00Z",
