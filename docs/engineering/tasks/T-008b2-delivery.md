@@ -53,7 +53,8 @@ node_modules, `__pycache__`, and other non-runtime trees. Not built locally (no 
 
 ### 4. CI `image` (PR)
 `.github/workflows/image.yml`, job `image`: buildx build with `load: true`, no push, provenance/sbom off; asserts
-non-root, no gcc/cc/g++, python-magic sniffs PNG, `alembic heads`, exit 64 without `SERVICE_ROLE`; api role
+non-root, no gcc/cc/g++, magic database present at `/usr/lib/file/magic.mgc`, python-magic sniffs a Pillow-built
+1x1 PNG as `image/png`, `alembic heads`, exit 64 without `SERVICE_ROLE`; api role
 (`DATABASE_URL=sqlite:////tmp/ci.db`, dummy SECRET_KEY): `/health` 200, `/ready` 200, `/internal/jobs/process` and
 `/internal/maintenance/sweep` 404; worker role: `/internal/jobs/process` 401, `/api/v1/session/me` 404.
 Required check: recommended YES once it has passed on this PR. It is not path-filtered, runs in about 2-4 minutes,
@@ -223,6 +224,15 @@ Disposition:
 - S7: open check for the first CI run (DEPLOY-PLAN section 4); prod-tag mutability noted there.
 - N1 fixed (diagram). N2 not done (Google's format has no ports). N3 = registers B1. N4: the stop message says
   in-flight requests finish.
+
+## CI fix: libmagic check in `image`
+The first CI run failed the "Image properties" step. The old check fed python-magic the 8-byte PNG signature plus 32
+zero bytes. That buffer is not a valid PNG, and recent libmagic (5.46 on trixie) needs the IHDR chunk after the
+signature before it reports `image/png`, so the check failed although libmagic worked. The step now builds a real
+1x1 PNG with Pillow inside the image and expects `image/png`, and first asserts the compiled database exists at
+`/usr/lib/file/magic.mgc` (the real file in trixie's `libmagic-mgc`, a Depends of `libmagic1t64`; the
+`/usr/share/file` and `/usr/share/misc` copies are symlinks; packages.debian.org file list). Not run locally (no
+Docker); actionlint clean.
 
 ## Follow-ups (not fixed here)
 - B1 requirements split (runtime vs test). B2 shellcheck/actionlint by the owner.

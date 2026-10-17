@@ -41,8 +41,13 @@ jobs:
           if docker run --rm --entrypoint sh "$IMAGE" -c 'command -v gcc || command -v cc || command -v g++'; then
             echo "compiler present in the final stage"; exit 1
           fi
+          # libmagic-mgc (pulled in by libmagic1t64) ships the compiled database here on trixie; the
+          # /usr/share/{file,misc}/magic.mgc entries are symlinks to it.
+          docker run --rm --entrypoint sh "$IMAGE" -c 'test -s /usr/lib/file/magic.mgc' \
+            || { echo "magic database /usr/lib/file/magic.mgc missing"; exit 1; }
+          # A real PNG (with IHDR): libmagic 5.46 does not call a bare signature plus zero bytes image/png.
           docker run --rm --entrypoint python "$IMAGE" -c \
-            "import magic, sys; m = magic.from_buffer(b'\x89PNG\r\n\x1a\n' + b'\0' * 32, mime=True); print(m); sys.exit(m != 'image/png')"
+            "import io, sys, magic; from PIL import Image; b = io.BytesIO(); Image.new('RGB', (1, 1)).save(b, 'PNG'); m = magic.from_buffer(b.getvalue(), mime=True); print(m); sys.exit(m != 'image/png')"
           docker run --rm --entrypoint alembic "$IMAGE" heads
       - name: Refuses to start without SERVICE_ROLE
         run: |
