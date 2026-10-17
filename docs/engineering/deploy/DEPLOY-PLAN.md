@@ -49,7 +49,7 @@ ap-northeast-1 (ADR-002 amendment). All doc URLs were read on 2026-10-16; the re
         +-----> R2 uploads    Cloud Tasks imageopz-jobs-<env> ----+
                                                                   |  run.app URL, OIDC, internal ingress
  LemonSqueezy --HTTPS--> imageopz-payments-<env> (Go ingress)     v
-                           |  CreateTask              imageopz-worker-<env>  (/internal/* only, concurrency 1)
+                           |  CreateTask              imageopz-worker-<env>  (/internal/* only, concurrency 2)
                            +--> Cloud Tasks imageopz-payments-<env> --^       |-> R2 outputs (upload), R2 uploads (read/delete)
  Cloud Scheduler --OIDC as iz-scheduler--> worker run.app URL /internal/maintenance/{sweep,cleanup} (Q1)
  CI (GitHub Actions, WIF) -> Artifact Registry imageopz -> Cloud Run Job imageopz-migrate-<env> (alembic) -> services
@@ -228,6 +228,8 @@ Notes
   `attribute.repo_env = <repository_id>:<environment>`, so no other repo or provider in the pool can match. The
   workflow puts the owner approval gate on that job.
   Validate the `has(assertion.environment)` mapping on the first CI run with both an environment job and a plain job.
+- Shared repo, mutable tags: the staging deployer could also move a `prod-*` tag (artifactregistry.writer on the
+  one repo). Accepted: prod deploys by digest, and the tag only protects images from cleanup.
 - Risk to check on the first CI run: whether `run.developer` granted per service/job is enough for
   `gcloud run deploy` and `gcloud run jobs execute --wait` (operation polling, `run.executions.get`, revision reads). Fallback: project-level `roles/run.developer` on the
   deployers only (both envs; recorded deviation).
