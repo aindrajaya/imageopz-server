@@ -32,5 +32,7 @@ USER 10001:10001
 EXPOSE 8080
 # --proxy-headers with uvicorn's default --forwarded-allow-ips (127.0.0.1): never "*", which makes uvicorn take the
 # first (client-supplied) X-Forwarded-For entry. The client IP comes from TRUSTED_PROXY_HOPS in the app
-# (app/utils/security.py:IpFingerprint), which reads the header itself.
+# (app/utils/security.py:IpFingerprint), which reads the header itself. The Cloud Run socket peer is undocumented and
+# not expected to be 127.0.0.1, so uvicorn likely ignores X-Forwarded-Proto too: request.url.scheme stays http (the app builds no absolute URLs; only the
+# trailing-slash redirect's Location would say http://).
 CMD ["sh", "-c", "case \"${SERVICE_ROLE:-}\" in api|worker) ;; *) echo 'SERVICE_ROLE must be api or worker' >&2; exit 64 ;; esac; exec uvicorn app.main:app --host 0.0.0.0 --port \"$PORT\" --workers 1 --proxy-headers"]

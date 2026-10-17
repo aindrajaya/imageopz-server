@@ -14,10 +14,9 @@ on:
 permissions:
   contents: read
 
-# One deploy at a time; a newer push waits instead of cancelling a rollout half-way.
-concurrency:
-  group: deploy
-  cancel-in-progress: false
+# Deploys never overlap per environment: job-level groups, so a run waiting for prod approval does not hold staging.
+# A newer push waits instead of cancelling a rollout half-way; GitHub keeps one pending run per group, so a third push
+# replaces the queued second one (the newest commit is the one that deploys).
 
 env:
   PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
@@ -34,6 +33,9 @@ jobs:
   build:
     if: vars.GCP_WIF_PROVIDER != ''
     needs: tests
+    concurrency:
+      group: deploy-build
+      cancel-in-progress: false
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -57,7 +59,11 @@ jobs:
           registry: ${{ vars.GCP_REGION }}-docker.pkg.dev
           username: oauth2accesstoken
           password: ${{ steps.auth.outputs.access_token }}
+      # buildx and the BuildKit image pinned (buildkit v0.33.1 = buildx-stable-1 on 2026-10-17, Docker Hub index digest).
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          version: v0.38.0
+          driver-opts: image=moby/buildkit:v0.33.1@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
       # provenance/sbom off: a plain image manifest, so the digest Cloud Run runs is the digest pushed here.
       - id: api
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
@@ -85,6 +91,9 @@ jobs:
   staging:
     if: vars.GCP_WIF_PROVIDER != ''
     needs: build
+    concurrency:
+      group: deploy-staging
+      cancel-in-progress: false
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -114,6 +123,9 @@ jobs:
   production:
     if: vars.GCP_WIF_PROVIDER != ''
     needs: [build, staging]
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     # Required reviewer (owner) is configured on this GitHub Environment; the prod deployer only trusts jobs in it.
