@@ -12,7 +12,7 @@
           "health"
         ],
         "summary": "Health Check",
-        "description": "Liveness: the process answers. No dependency checks and no error text (H1); readiness is /readyz.",
+        "description": "Liveness: the process answers. No dependency checks and no error text (H1); readiness is /ready.",
         "operationId": "health_check_health_get",
         "responses": {
           "200": {

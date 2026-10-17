@@ -71,11 +71,11 @@ Updated 2026-10-17 by Claude Code (task T-008b1).
 | J6 | A late worker that lost its claim may still upload `optimized/{job_id}.avif` for a job the sweeper FAILed; cleanup only selects DONE jobs, so the object is orphaned. | backlog |
 | J7 | Legacy PROCESSING rows with `processing_started_at IS NULL` are neither reclaimed nor swept (none expected: production DB starts empty). | backlog |
 | J8 | `docs/PRD-backend.v3.md` ("latest spec") still describes the Redis BLPOP queue; ADR-005 supersedes it. | docs |
-| H1 | CLOSED 2026-10-17 (T-008b1): `/health` is liveness with a generic body (no DB, no error text); `/readyz` checks the DB and answers 503 `{"status": "unavailable"}`; `tests/test_health.py`. | - |
+| H1 | CLOSED 2026-10-17 (T-008b1): `/health` is liveness with a generic body (no DB, no error text); `/ready` (renamed from `/readyz`, see R1) checks the DB and answers 503 `{"status": "unavailable"}`; `tests/test_health.py`. | - |
 | C1 | CLOSED 2026-10-17 (T-008b1): session cookie `Secure` in every ENVIRONMENT except development (`Settings.session_cookie_secure`); `tests/test_session_cookie_secure.py`. | - |
 | D1 | CLOSED 2026-10-17 (T-008b1): Scheduler -> worker `POST /internal/maintenance/{sweep,cleanup}` (Q1, ADR-005 amendment); `tests/test_maintenance_endpoints.py`. | - |
 | UI1 | imageopz-ui `logoutSession` (`lib/imageopzApi.ts`) always sends `credentials: "include"`, ignoring `VITE_IMAGEOPZ_SEND_COOKIES`; with `CORS_ALLOW_CREDENTIALS=false` the browser would block the logout response. Keep credentials on in CORS until fixed. | T-008b3 (UI) |
-| R1 | Unverified: whether Google's front end serves paths ending in `z` (`/readyz`) on run.app from outside. Check in staging; probes reach the container directly. | T-008b2 staging |
+| R1 | Cloud Run reserves "some paths ending with `z`" and recommends avoiding all of them (https://docs.cloud.google.com/run/docs/known-issues, "Reserved URL paths"). Python renamed `/readyz` to `/ready` (T-008b1 amendment). Open: the Go payments ingress still serves `/healthz` and `/readyz` (`services/payments-go/internal/httpapi/httpapi.go`, tests, `scripts/e2e-direct.sh`, README); rename to `/health` and `/ready` before its run.app smoke test. | T-008b2 |
 | U13 | A Pro renewal resets `pro_credits_used`; a reservation made before and released after decrements credits spent after the renewal (floor at 0 only). Decide with S6. | payments follow-up |
 
 ## Protected behaviors

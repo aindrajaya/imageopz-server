@@ -15,5 +15,5 @@ Read when you need a running API (tests need no running services).
 - Expired-output cleanup: `python -m app.cli.cleanup_expired`. Both CLIs are idempotent. Deployed, Cloud Scheduler calls the
   same code on the worker: `POST /internal/maintenance/sweep` and `/cleanup` (internal auth; locally `X-Internal-Token`).
 - `SERVICE_ROLE` (default `all`): `api` mounts public routes only, `worker` only `/internal/*` and health; anything else fails at start.
-- Health: `/health` (liveness, no DB) and `/readyz` (DB check, 503 when down).
+- Health: `/health` (liveness, no DB) and `/ready` (DB check, 503 when down).
 - OpenAPI spec: `IMAGEOPZ_ENV_FILE="" python scripts/generate_openapi.py` regenerates `docs/openapi.json`.

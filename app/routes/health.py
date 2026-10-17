@@ -23,12 +23,12 @@ logger = logging.getLogger("imageopz.routes.health")
 )
 async def health_check():
     """
-    Liveness: the process answers. No dependency checks and no error text (H1); readiness is /readyz.
+    Liveness: the process answers. No dependency checks and no error text (H1); readiness is /ready.
     """
     return HealthCheckResponse(status="healthy", version="1.0.0")
 
 
-@router.get("/readyz", include_in_schema=False)
+@router.get("/ready", include_in_schema=False)
 def readiness_check(db_session: Session = Depends(get_db)):
     """Readiness: 200 when the database answers, else 503. Generic bodies only; the error is logged. Sync def: the
     blocking DB call runs in the threadpool, so a stalled pooler cannot block /health on the event loop."""

@@ -82,7 +82,7 @@ a week of inactivity [R20] is acceptable; restore it before a staging session.
 | | `imageopz-api-<env>` | `imageopz-worker-<env>` | `imageopz-payments-<env>` |
 |---|---|---|---|
 | Image | api@digest | api@digest | payments-ingress@digest |
-| Routes | `SERVICE_ROLE=api`: public `/api/v1/*`, `/`, `/health`, `/readyz`, `/version` (no `/internal`) | `SERVICE_ROLE=worker`: `/internal/jobs/process`, `/internal/payments/events`, `/internal/maintenance/{sweep,cleanup}`, `/health`, `/readyz`, `/version` | `/webhooks/lemonsqueezy`, `/healthz`, `/readyz` |
+| Routes | `SERVICE_ROLE=api`: public `/api/v1/*`, `/`, `/health`, `/ready`, `/version` (no `/internal`) | `SERVICE_ROLE=worker`: `/internal/jobs/process`, `/internal/payments/events`, `/internal/maintenance/{sweep,cleanup}`, `/health`, `/ready`, `/version` | `/webhooks/lemonsqueezy`, `/healthz`, `/readyz` |
 | CPU / memory | 1 / 512Mi | 2 / 4Gi (measure in staging, Q5) | 1 / 512Mi |
 | Concurrency | 20 | 2 (one image job + one payment or maintenance call; see Cloud Tasks queues) | 8 (= Go pool MaxConns) |
 | Min / max instances staging | 0 / 2 | 0 / 1 (Q5) | 0 / 1 |
@@ -173,14 +173,15 @@ concurrency 2, so the second slot stays free for a payment event or a maintenanc
   audience = worker URL, allowed email = `iz-tasks-invoker-<env>`), giving two independent checks.
 - `SERVICE_ROLE` = `api` | `worker` | `all` (implemented T-008b1; default `all` for local dev and tests; any other value
   fails settings validation, so the process does not start). `api` does not mount the internal router (`/internal/*`
-  is 404). `worker` mounts only the health routes (`/health`, `/readyz`, `/version`) and the internal router: no
+  is 404). `worker` mounts only the health routes (`/health`, `/ready`, `/version`) and the internal router: no
   public routes, no CORS, no `/docs`, `/redoc` or `/openapi.json`. The api still serves them until A1 (T-008b2);
   the internal routes are excluded from the schema. Defense in depth: the api service also runs without
   `INTERNAL_AUTH_MODE`, so even a mounted `/internal/*` would refuse every call with 401.
-- Health (H1, T-008b1): `/health` is liveness only (generic body, no DB check, never error text); `/readyz` checks the
-  database and answers 503 `{"status": "unavailable"}` on failure. Unverified: whether Google's front end serves
-  paths ending in `z` from outside on run.app; check `/readyz` from a browser in staging. Probes reach the container
-  directly either way.
+- Health (H1, T-008b1): `/health` is liveness only (generic body, no DB check, never error text); `/ready` checks the
+  database and answers 503 `{"status": "unavailable"}` on failure. Named `/ready`, not `/readyz`: Cloud Run reserves
+  "some paths ending with `z`" and recommends "avoiding all paths that end in `z`" [R45]. The Go payments ingress
+  still serves `/healthz` and `/readyz` (registers R1, T-008b2); its probes reach the container directly, but a
+  smoke test through run.app may not.
 - The api's public fallback `POST /api/v1/webhooks/lemonsqueezy` stays mounted (ADR-001 rollback path); it needs
   `LEMONSQUEEZY_SECRET`.
 
@@ -314,8 +315,8 @@ requests never queue for a connection. The api runs concurrency 20 on a pool of 
 2. Staging (deployer `iz-deployer-staging`): `gcloud run jobs deploy imageopz-migrate-staging --image=<api digest>`,
    then `gcloud run jobs execute ... --wait` [R9]. Then deploy worker, api and payments by digest (same flags as
    `60-deploy-services.sh`, but without `--no-allow-unauthenticated`/`--allow-unauthenticated`: IAM is set once by
-   the owner, and those flags may try an IAM policy update that run.developer cannot do). Smoke test: `/health`, `/readyz` and `/version` on the api,
-   `/healthz` and `/readyz` on payments.
+   the owner, and those flags may try an IAM policy update that run.developer cannot do). Smoke test: `/health`, `/ready` and `/version` on the api,
+   `/healthz` and `/readyz` on payments (until R1 renames them; a 404 from Google's front end there is R45, not the app).
 3. Prod (GitHub Environment `production`, owner approval, deployer `iz-deployer-prod`): the same digests are tagged
    `prod-<sha>`, which the cleanup policy keeps. The steps are migrate, wait, then the services. Nothing is rebuilt.
 4. Migrations run before the new revision serves traffic. The previous revision keeps serving during the migration,
@@ -439,7 +440,7 @@ policy; 10 USD budget alerts and the kill switch (section 0). The largest variab
 | 11 | BLOCKER: `supabase db dump` of prod before the first and every later prod migration (Free plan has no backups [R33]) | owner |
 | 12 | `SERVICE_ROLE` route split (DONE T-008b1); `EXPOSE_API_DOCS` (A1); SECRET_KEY check scoped to the api | T-008b2 |
 | 13 | S4: cache Google OIDC certs in `app/utils/internal_auth.py` | T-008b |
-| 14 | DONE T-008b1 (H1): `/health` generic liveness, `/readyz` DB check with 503 generic body | - |
+| 14 | DONE T-008b1 (H1): `/health` generic liveness, `/ready` DB check with 503 generic body (renamed from `/readyz`, R45) | - |
 | 15 | X-Forwarded-For: confirm in staging what Cloud Run puts in XFF (`IpFingerprint` takes the first entry, spoofable); fix before relying on IP for quotas (T-002 risk, U1) | T-008b |
 | 16 | U1: risk accepted with cheap bounds (Q6, section 0); no limiter at go-live | owner (decided 2026-10-17) |
 | 17 | Budget + notification channel + alert policies (`90-observability.sh`); each policy seen firing once in staging (forced error, failed job) | owner |
@@ -542,5 +543,6 @@ Answered 2026-10-17; decisions in section 0. The original questions are kept bel
 - [R42] Artifact Registry pricing: https://cloud.google.com/artifact-registry/pricing (snippet); same-region egress: https://docs.cloud.google.com/artifact-registry/docs/repositories
 - [R43] Cloud Run egress allowance: https://docs.cloud.google.com/run/docs/jobs-cost-optimization
 - [R44] Network pricing: https://cloud.google.com/vpc/network-pricing (snippet)
+- [R45] Cloud Run known issues, "Reserved URL paths": https://docs.cloud.google.com/run/docs/known-issues
 "(snippet)": the page renders client-side; the figure came from a search snippet of that official URL and should be
 rechecked on the live page or in the pricing calculator.

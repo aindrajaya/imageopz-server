@@ -27,14 +27,14 @@ def test_api_role_does_not_mount_internal_routes(make_client, internal):
     assert not [p for p in _paths(c.app) if p and p.startswith("/internal")]
     assert c.get("/api/v1/session/me", headers={"X-Session-Id": "sess_role_api"}).status_code == 200
     assert c.get("/health").status_code == 200
-    assert c.get("/readyz").status_code == 200
+    assert c.get("/ready").status_code == 200
     assert c.get("/").status_code == 200
 
 
 def test_worker_role_mounts_only_internal_and_health(make_client, internal):
     c = make_client(SERVICE_ROLE="worker")
     public = [p for p in _paths(c.app) if p and not p.startswith("/internal")]
-    assert sorted(public) == ["/health", "/readyz", "/version"]  # no docs, no schema, no public API
+    assert sorted(public) == ["/health", "/ready", "/version"]  # no docs, no schema, no public API
     for method, path in (("get", "/api/v1/session/me"), ("post", "/api/v1/uploads/presign"),
                          ("get", "/docs"), ("get", "/openapi.json"),
                          ("post", "/api/v1/webhooks/lemonsqueezy"), ("get", "/api/v1/status/x"), ("get", "/")):

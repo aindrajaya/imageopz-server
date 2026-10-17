@@ -147,3 +147,19 @@ gh pr create --base main --head feat/deploy-readiness --title "T-008b1 deploy re
 gh pr checks <n> --watch && gh pr merge <n> --squash --delete-branch
 ```
 After the merge: record the squash SHA and PR number in STATE.md (T-008b2 start).
+
+## Amendment 2026-10-17: /readyz renamed to /ready
+Basis: Cloud Run known issues, "Reserved URL paths": "You can't use the following URL paths: ... Some paths ending
+with `z`. To prevent conflicts with reserved paths, we recommend avoiding all paths that end in `z`"
+(https://docs.cloud.google.com/run/docs/known-issues). This settles registers R1 for Python without a staging check.
+
+- `app/routes/health.py`: route `/ready` (handler unchanged), `/health` docstring; `docs/openapi.json` regenerated
+  (only that docstring changes; `/ready` stays out of the schema).
+- Tests changed deliberately for the rename: `tests/test_health.py` (paths and test names `test_ready_*`),
+  `tests/test_service_roles.py` (api smoke path, worker route list). New `test_readyz_is_not_served` pins the old
+  path as 404.
+- Docs: DEPLOY-PLAN (routes table, SERVICE_ROLE, Health, smoke test, T-008b list item 14, citation R45), registers
+  H1 and R1, runbooks/local-run.md. Earlier sections of this file are left as written (append-only).
+- Follow-up (out of scope, R1, T-008b2): the Go payments ingress still serves `/healthz` and `/readyz`
+  (`services/payments-go/internal/httpapi/httpapi.go`, its tests, `scripts/e2e-direct.sh`, README).
+- Checks: SQLite 171 passed / 13 skipped; Postgres 16.15 (Homebrew) 184 passed.

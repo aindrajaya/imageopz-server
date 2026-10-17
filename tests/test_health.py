@@ -1,4 +1,4 @@
-"""H1: /health is a liveness check with a generic body; /readyz checks the database and never returns error text."""
+"""H1: /health is a liveness check with a generic body; /ready checks the database and never returns error text."""
 import pytest
 
 SECRET_ERROR = "password authentication failed for user owner at db.internal:6543"
@@ -29,18 +29,23 @@ def test_health_is_generic_and_independent_of_the_database(client, broken_db):
     assert "password" not in res.text
 
 
-def test_readyz_ok_when_database_answers(client):
-    res = client.get("/readyz")
+def test_ready_ok_when_database_answers(client):
+    res = client.get("/ready")
     assert res.status_code == 200
     assert res.json() == {"status": "ready"}
 
 
-def test_readyz_is_503_with_generic_body_when_database_fails(client, broken_db):
-    res = client.get("/readyz")
+def test_ready_is_503_with_generic_body_when_database_fails(client, broken_db):
+    res = client.get("/ready")
     assert res.status_code == 503
     assert res.json() == {"status": "unavailable"}
     assert "password" not in res.text and "6543" not in res.text
 
 
-def test_readyz_is_not_in_the_public_schema(client):
-    assert "/readyz" not in client.get("/openapi.json").json()["paths"]
+def test_ready_is_not_in_the_public_schema(client):
+    assert "/ready" not in client.get("/openapi.json").json()["paths"]
+
+
+def test_readyz_is_not_served(client):
+    # Cloud Run reserves some paths ending in "z" (known issues, "Reserved URL paths"); readiness lives at /ready.
+    assert client.get("/readyz").status_code == 404
