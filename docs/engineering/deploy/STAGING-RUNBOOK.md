@@ -1,9 +1,12 @@
 # STAGING-RUNBOOK - first bring-up of ImageOpz staging on Cloud Run (owner-executed)
 
-Generated in T-008c0 from main@fbe161a: `deploy/gcloud/*`, `.github/workflows/deploy.yml`, `image.yml`, `Dockerfile`,
-[DEPLOY-PLAN.md](DEPLOY-PLAN.md), imageopz-ui `docs/engineering/deploy/UI-ENVIRONMENTS.md`. Phases 3-4 rewritten in
-T-008c1 (bootstrap fixes G1-G3); output serving (D1, presigned GET) and Phase 8 expectations updated in T-008c2. Nothing in this file has been run against GCP; every `DRY_RUN=1` command was run
-locally (transcript excerpts in tasks/T-008c0-staging-runbook.md and tasks/T-008c1-bootstrap.md).
+Verified against main@3fc950f (server) / main@b86307e (UI).
+
+Sources: `deploy/gcloud/*`, `deploy/gcloud/env.example`, `.github/workflows/deploy.yml`, [DEPLOY-PLAN.md](DEPLOY-PLAN.md),
+imageopz-ui `docs/engineering/deploy/UI-ENVIRONMENTS.md` and its download code (`lib/downloads.ts`). Written in T-008c0,
+Phases 3-4 in T-008c1, D1 in T-008c2, reconciled line by line in T-DOCS-RB. Nothing in this file has been run against
+GCP; every script step was run locally with `DRY_RUN=1` and a gcloud stub that fails if called (evidence:
+tasks/T-DOCS-RB-runbook-reconcile.md).
 
 How to use it
 - Run the phases in order. Each phase ends with **STOP**: paste the listed output to the reviewer before continuing.
@@ -13,9 +16,13 @@ How to use it
   fails with "permission denied" (a checkout that lost the mode, e.g. `core.fileMode=false`), run the same command with
   `bash` in front: `DRY_RUN=0 bash deploy/gcloud/NN-*.sh`.
 - Run them only from a `main` checkout you have inspected (`git log -1` = the merged SHA you reviewed).
-- The bootstrap order (gap G1, fixed in T-008c1): CI identity for the registry only (3.4), repository variables (3.5),
-  a `build_only` workflow run pushes the first images (4.1), the owner deploys the job and services by digest
-  (4.3-4.4), then the full CI identity (4.5) and the migration (4.6). The first full CI rollout follows `65` (5.1b).
+- The bootstrap order (gap G1, fixed in T-008c1): GitHub Environment `production` with a required reviewer (3.2,
+  before any repository variable), CI identity for the registry only (3.4), repository variables (3.5), a
+  `build_only` workflow run pushes the first images (4.1), digests into the env file (4.2), the owner deploys the job
+  and services by digest (4.3-4.4), then the full CI identity (4.5) and the migration (4.6). Public access (`65`, 5.1)
+  comes after the schema is at head; the first full CI rollout follows `65` (5.1b).
+- Merge every pending PR (including the one that brought this file) before 3.5: from 3.5 until 5.1b, a push to `main`
+  starts a deploy that cannot succeed.
 - Secret values never appear on a command line, in an env file, in a paste to the reviewer, or in shell history.
 
 Fixed values
@@ -94,15 +101,33 @@ echo "$PROJECT_ID $REGION $ENV dry_run=$DRY_RUN pn=$PROJECT_NUMBER"
 Billing > Budgets & alerts in the console: note whether a budget for `imageopz-prod-4821` exists. If none exists, it is
 created in Phase 1.4 (before anything billable). Billing > Reports should show ~0 for the project today.
 
-### 0.4 Owner prerequisites outside GCP (check, do not create anything new in this phase)
-- Cloudflare R2: buckets `imageopz-staging` and `imageopz-uploads-staging` exist; uploads bucket CORS and the
-  `uploads/` 1-day lifecycle rule are set (README "Owner steps outside gcloud"). Both buckets are private: no r2.dev
-  public URL, no custom domain (D1).
+### 0.4 Cloudflare R2 prerequisites (owner, in the Cloudflare dashboard; all done before Phase 2)
+These scripts never touch Cloudflare. Staging needs its two buckets and two tokens before 2.2; the prod rows are
+listed so nothing is shared across environments (Q4, U15), and are needed only at the prod bring-up.
+
+| Item | Staging (now) | Prod (prod bring-up) |
+|---|---|---|
+| Outputs bucket | `imageopz-staging` | `imageopz` |
+| Uploads bucket | `imageopz-uploads-staging` | `imageopz-uploads` |
+| Outputs token (Object Read & Write, this one bucket only) | staging outputs token -> `imageopz-r2-outputs-*-staging` (2.2) | prod outputs token -> `imageopz-r2-outputs-*-prod` |
+| Uploads token (Object Read & Write, this one bucket only) | staging uploads token -> `imageopz-r2-uploads-*-staging` (2.2) | prod uploads token -> `imageopz-r2-uploads-*-prod` |
+| Uploads bucket CORS origins | `https://staging.imageopz.aindrajaya.my.id`, `http://localhost:3000` | `https://imageopz.aindrajaya.my.id` only |
+
+- Both outputs buckets are private (D1): Settings > Public Development URL disabled, Custom Domains empty, no CORS rule
+  (the UI opens the presigned link as a navigation). If `imageopz` already exists from the VPS era, check the same.
+- Uploads buckets are private too; CORS rule on each: the origins above, methods `PUT, GET`, allowed header
+  `content-type`, max-age 3600 (DEPLOY-PLAN section 7). Lifecycle rule on each: prefix `uploads/`, delete after 1 day (U3).
+- Four tokens in total, never one account-wide token (U15); each token's Access Key ID and Secret Access Key are
+  shown once: create the staging pair right before 2.2 and enter them there, nowhere else. Revoke the old account-wide
+  token once neither environment uses it.
+
+### 0.5 Other owner prerequisites (check)
 - Supabase: the staging project exists (Q7), region ap-northeast-1, not paused.
 - LemonSqueezy: test mode available on the store.
 
 **STOP 0** - paste: `gcloud config list`, the `projects describe`, `get-ancestors` and `billing projects describe`
-lines, the `echo` line of 0.2, and whether a budget exists. Do not paste the env file.
+lines, the `echo` line of 0.2, whether a budget exists, and the 0.4 staging column as done / not done (bucket names,
+public access off, CORS origins, lifecycle; never a token value). Do not paste the env file.
 
 ---
 
@@ -168,7 +193,7 @@ existed (0.3), the script prints `# exists:` and changes nothing.
 
 ### 2.1 `30-secrets.sh` (containers + per-secret accessor bindings, no values)
 ```sh
-./deploy/gcloud/30-secrets.sh                     # 9 secrets, 16 accessor bindings
+./deploy/gcloud/30-secrets.sh                     # 9 `secrets create`, 18 accessor bindings
 DRY_RUN=0 ./deploy/gcloud/30-secrets.sh
 ```
 
@@ -192,8 +217,8 @@ Alternative for a value already in the clipboard: `pbpaste | tr -d '\n' | gcloud
 | `imageopz-database-url-staging` | Staging Supabase > Connect > **Transaction pooler** (port 6543). Form: `postgresql://postgres.<staging-ref>:<db-password>@<pooler-host>:6543/postgres?sslmode=require`. Bare `postgresql://` only (never `postgresql+psycopg://`: the Go ingress shares it and pgx rejects that scheme). User = `postgres.<ref>` (table owner). Unknown password: Project Settings > Database > reset. | `add_secret` |
 | `imageopz-database-url-session-staging` | Same project, **Session pooler** (port 5432), same user and password, same form ending `:5432/postgres?sslmode=require`. Used only by the migrate job. | `add_secret` |
 | `imageopz-secret-key-staging` | Generated, never seen: `openssl rand -hex 32 \| tr -d '\n' \| gcloud secrets versions add imageopz-secret-key-staging --project="$PROJECT_ID" --data-file=-` | generated |
-| `imageopz-r2-outputs-access-key-id-staging` / `...-secret-access-key-staging` | Cloudflare R2 > Manage API tokens > Create: Object Read & Write, **only** bucket `imageopz-staging`. Access Key ID and Secret Access Key are shown once. Read by the worker (writes, cleanup) and the api (signs download URLs, D1). Never the account-wide token (U15). | `add_secret` x2 |
-| `imageopz-r2-uploads-access-key-id-staging` / `...-secret-access-key-staging` | A second token, Object Read & Write, **only** bucket `imageopz-uploads-staging`. | `add_secret` x2 |
+| `imageopz-r2-outputs-access-key-id-staging` / `imageopz-r2-outputs-secret-access-key-staging` | The staging outputs token (0.4): Cloudflare R2 > Manage API tokens > Create: Object Read & Write, **only** bucket `imageopz-staging`. Access Key ID and Secret Access Key are shown once. Read by the worker (writes, cleanup) and the api (signs download URLs, D1). Never the account-wide token, never the prod token (U15). | `add_secret` x2 |
+| `imageopz-r2-uploads-access-key-id-staging` / `imageopz-r2-uploads-secret-access-key-staging` | The staging uploads token (0.4): Object Read & Write, **only** bucket `imageopz-uploads-staging`. Read by the api (presigned PUT, `/complete`) and the worker (reads the upload, sweep). | `add_secret` x2 |
 | `imageopz-lemonsqueezy-api-key-staging` | LemonSqueezy, **test mode on**: Settings > API > new key (a test-mode key). | `add_secret` |
 | `imageopz-lemonsqueezy-signing-secret-staging` | Generated here, entered in the LemonSqueezy webhook form in Phase 7: `openssl rand -hex 20 \| tr -d '\n' \| gcloud secrets versions add imageopz-lemonsqueezy-signing-secret-staging --project="$PROJECT_ID" --data-file=-` (40 hex chars; LemonSqueezy limits the signing-secret length, believed 40, check the form). | generated |
 
@@ -216,9 +241,11 @@ for s in database-url database-url-session; do
     "$(gcloud secrets versions access latest --secret="imageopz-$s-staging" --project="$PROJECT_ID" | grep -oE ':(5432|6543)/' | tr -d ':/')"
 done
 gcloud secrets get-iam-policy imageopz-database-url-staging --project="$PROJECT_ID" --format='value(bindings.members)'
+gcloud secrets get-iam-policy imageopz-r2-outputs-secret-access-key-staging --project="$PROJECT_ID" --format='value(bindings.members)'
 ```
 Expected: every secret shows `1`; `database-url scheme_ok=1 port=6543`, `database-url-session scheme_ok=1 port=5432`;
-the database-url policy lists `iz-api-staging`, `iz-worker-staging`, `iz-payments-staging`.
+the database-url policy lists `iz-api-staging`, `iz-worker-staging`, `iz-payments-staging`; the outputs-token policy
+lists `iz-api-staging` and `iz-worker-staging` (the api signs download URLs, T-008c2).
 
 **STOP 2** - paste: the 2.3 output only (counts, ports, members).
 
@@ -294,11 +321,10 @@ gh variable set GCP_DEPLOYER_STAGING --repo aindrajaya/imageopz-server --body "i
 gh variable set GCP_DEPLOYER_PROD    --repo aindrajaya/imageopz-server --body "iz-deployer-prod@imageopz-prod-4821.iam.gserviceaccount.com"
 gh variable list --repo aindrajaya/imageopz-server
 ```
-From this moment every push to `main` runs the full deploy workflow. **Do not merge anything to `main` until Phase 5.1
+From this moment every push to `main` runs the full deploy workflow. **Do not merge anything to `main` until Phase 5.1b
 is done**: the run's `staging` job would fail (no services or run.developer before 4.5; the smoke test needs the public
-api from 5.1). After that, every push deploys
-staging and then **waits for prod approval**: reject every `production` approval until the prod bring-up (prod
-resources do not exist).
+api from 5.1). After that, every push deploys staging and then **waits for prod approval**: reject every `production`
+approval until the prod bring-up (prod resources do not exist).
 
 **STOP 3** - paste: the 3.1 verification, the 3.2 `gh api` output, the 3.4 verification, `gh variable list`.
 
@@ -310,9 +336,11 @@ resources do not exist).
 Runs `tests` and `build` (both images pushed once, tagged with the main commit SHA), prints the digests, deploys nothing.
 ```sh
 gh workflow run deploy.yml --repo aindrajaya/imageopz-server --ref main -f build_only=true
-gh run list --repo aindrajaya/imageopz-server --workflow=deploy.yml --limit 1     # note the run id
+gh run list --repo aindrajaya/imageopz-server --workflow=deploy.yml --event=workflow_dispatch --branch=main --limit 1
 gh run watch <run-id> --repo aindrajaya/imageopz-server --exit-status
 ```
+Note the run id from the list, and check its created time is the dispatch just made (a bare `--limit 1` can pick
+another run).
 Expected: `tests` and `build` green; `staging` and `production` skipped. The run summary prints two lines ready for the
 env file:
 ```
@@ -350,8 +378,9 @@ api and payments take no public traffic before `65` (Phase 5.1); the worker has 
 DRY_RUN=0 ./deploy/gcloud/60-deploy-services.sh
 ```
 Expected in the output: `# imageopz-<s>-staging: image from API_IMAGE` (worker, api) and `... from PAYMENTS_IMAGE`
-(payments); `TRUSTED_PROXY_HOPS: '1'` and `R2_BUCKET_NAME: 'imageopz-staging'` in the api block (it signs download
-URLs, D1); no `R2_CUSTOM_DOMAIN` in any block. Verify:
+(payments); in the api block `TRUSTED_PROXY_HOPS: '1'`, `CORS_ALLOW_ORIGINS: 'https://staging.imageopz.aindrajaya.my.id'`,
+`CORS_ALLOW_CREDENTIALS: 'true'` and `R2_BUCKET_NAME: 'imageopz-staging'` (it signs download URLs, D1); the api's
+`--set-secrets` includes `R2_ACCESS_KEY_ID=imageopz-r2-outputs-access-key-id-staging:latest`. Verify:
 ```sh
 gcloud run services list --project="$PROJECT_ID" --region="$REGION" --filter='metadata.name~-staging$' \
   --format='table(metadata.name,status.conditions[0].status,metadata.annotations."run.googleapis.com/ingress")'
@@ -360,7 +389,7 @@ for s in api worker payments; do
     --format='value(metadata.annotations."run.googleapis.com/urls")'; done
 ```
 Expected: three services `True` (the startup probe on `/ready` passed, so each reached the database); ingress
-`all` / `internal` / `all`; each URL list contains `https://imageopz-<s>-staging-<PROJECT_NUMBER>.asia-northeast1.run.app`.
+api `all`, payments `all`, worker `internal`; each URL list contains `https://imageopz-<s>-staging-<PROJECT_NUMBER>.asia-northeast1.run.app`.
 The worker's deterministic URL must be present: it is the OIDC audience in the worker, api and payments config.
 
 ### 4.5 `80-wif.sh`, full stage
@@ -425,8 +454,8 @@ api and payments `allUsers`. An error mentioning "permitted customer" or domain 
 ### 5.1b First CI rollout (validates the CI path, the S7 IAM edge for `jobs execute --wait`, and the smoke test)
 Only now: the smoke test in `ci-rollout.sh` needs the public api and payments from 5.1 (before it, every path is 403).
 ```sh
-gh workflow run deploy.yml --repo aindrajaya/imageopz-server --ref main
-gh run list --repo aindrajaya/imageopz-server --workflow=deploy.yml --limit 1
+gh workflow run deploy.yml --repo aindrajaya/imageopz-server --ref main     # build_only defaults to false
+gh run list --repo aindrajaya/imageopz-server --workflow=deploy.yml --event=workflow_dispatch --branch=main --limit 1
 gh run watch <run-id> --repo aindrajaya/imageopz-server
 ```
 Expected: `tests`, `build`, `staging` green (migrate is a no-op at head; smoke test passes); `production` waits for
@@ -532,21 +561,29 @@ entry (expected A + 1).
 ## Phase 7 - UI wiring
 
 ### 7.1 Vercel (imageopz-ui, UI-ENVIRONMENTS.md "Owner steps")
-1. Branch `staging` exists on imageopz-ui; Vercel domain `staging.imageopz.aindrajaya.my.id` assigned to it; DNS record
-   per UI-ENVIRONMENTS step 3.
-2. Preview variables scoped to branch `staging`:
+1. Branch `staging` on imageopz-ui, cut from `main` (which carries the download and session fixes the Phase 8 checks
+   expect): `git switch main && git pull && git switch -c staging && git push -u origin staging` (or fast-forward it
+   to `main` if it exists).
+2. Vercel > Project > Settings > Domains: add `staging.imageopz.aindrajaya.my.id`, assign it to Git branch `staging`.
+   No DNS step by hand: DNS for `aindrajaya.my.id` is on Vercel (`dig +short NS aindrajaya.my.id` ->
+   `ns1.vercel-dns.com.`, `ns2.vercel-dns.com.`), so Vercel creates the record and the certificate. Check that the
+   domain shows "Valid Configuration".
+3. Vercel > Settings > Environment Variables, environment **Preview**, scoped to Git branch `staging`:
 
 | Variable | Value |
 |---|---|
-| `VITE_IMAGEOPZ_API_BASE_URL` | `https://imageopz-api-staging-<PROJECT_NUMBER>.asia-northeast1.run.app` (no trailing slash) |
-| `VITE_IMAGEOPZ_SEND_COOKIES` | `false` |
+| `VITE_IMAGEOPZ_API_BASE_URL` | `https://imageopz-api-staging-<PROJECT_NUMBER>.asia-northeast1.run.app` (no trailing slash). Required. |
+| `VITE_IMAGEOPZ_SEND_COOKIES` | `false` (header-only sessions) |
 | `VITE_IMAGEOPZ_USE_VITE_PROXY` | unset |
-| `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` | staging Supabase project URL / anon key |
+| `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` | staging Supabase project URL / anon key (never the service-role key). Both required. |
 | `VITE_SUPABASE_REDIRECT_URL` | `https://staging.imageopz.aindrajaya.my.id/auth/callback` |
-| `VITE_PUBLIC_POSTHOG_PROJECT_TOKEN` / `_HOST` | unset |
+| `VITE_PUBLIC_POSTHOG_PROJECT_TOKEN` / `VITE_PUBLIC_POSTHOG_HOST` | unset (analytics off), or a separate staging PostHog project; never the prod token |
 
-3. Generic Preview variables for other branches as in UI-ENVIRONMENTS ("Preview"); previews will hit CORS errors by design.
-4. Redeploy the `staging` branch; the page must not show "ImageOpz is not configured".
+   Every `VITE_` value ships in the bundle: nothing secret here.
+4. Generic Preview variables for all other branches as in UI-ENVIRONMENTS ("Preview": staging api URL and staging
+   Supabase, `VITE_SUPABASE_REDIRECT_URL` unset); previews hit CORS errors by design.
+5. Redeploy the `staging` branch (Vite inlines variables at build time); the page must not show "ImageOpz is not
+   configured" (that screen names any missing required variable).
 
 ### 7.2 API CORS
 `CORS_ALLOW_ORIGINS` comes from `UI_ORIGINS` in the env file and is already set by Phase 4.4. To change it, edit
@@ -556,18 +593,19 @@ image each service runs now; a digest left in the env file would roll the servic
 gcloud run services describe imageopz-api-staging --project="$PROJECT_ID" --region="$REGION" --format='value(spec.template.spec.containers[0].image)'
 gcloud run services describe imageopz-payments-staging --project="$PROJECT_ID" --region="$REGION" --format='value(spec.template.spec.containers[0].image)'
 ```
-`CORS_ALLOW_CREDENTIALS` stays `true` until T-008b3 (UI1) is live on staging.
+`CORS_ALLOW_CREDENTIALS` stays `true` for now. The staging UI from `main` already sends no credentials (T-008b3,
+UI1), and UI-ENVIRONMENTS step 7 asks for `false` once it is live, but `60` writes the literal `true` (gap G8): the
+flip waits for that script task. `true` is harmless with the header-only UI (it never sends credentials).
 
 ### 7.3 Supabase staging Auth
 Authentication > URL Configuration: Site URL `https://staging.imageopz.aindrajaya.my.id`; Redirect URLs
 `https://staging.imageopz.aindrajaya.my.id/auth/callback` (plus `http://localhost:3000/auth/callback` only if wanted).
 
-### 7.4 R2
-- Uploads bucket `imageopz-uploads-staging`: CORS already set; confirm it lists `https://staging.imageopz.aindrajaya.my.id`
-  (and `http://localhost:3000`), methods `PUT, GET`, header `content-type`, max-age 3600; lifecycle `uploads/` 1 day (U3).
-- Outputs bucket `imageopz-staging`: private (D1). Public development URL (r2.dev) disabled, no custom domain, no CORS
-  rule needed (the UI opens the presigned link in a new tab, a navigation, not a fetch). Check in the dashboard:
-  Settings > Public access shows the r2.dev URL disabled and no custom domain.
+### 7.4 R2 (re-check of 0.4)
+- Uploads bucket `imageopz-uploads-staging`: the CORS rule lists `https://staging.imageopz.aindrajaya.my.id` (and
+  `http://localhost:3000`), methods `PUT, GET`, header `content-type`, max-age 3600; lifecycle `uploads/` 1 day (U3).
+- Outputs bucket `imageopz-staging`: private (D1): Public Development URL disabled, Custom Domains empty, no CORS rule
+  (the UI opens the presigned link in a new tab, a navigation, not a fetch).
 
 ### 7.5 LemonSqueezy webhook (test mode)
 Settings > Webhooks (test mode) > add: URL `https://imageopz-payments-staging-<PROJECT_NUMBER>.asia-northeast1.run.app/webhooks/lemonsqueezy`;
@@ -598,9 +636,22 @@ Use the Phase 6 shell (`API`, `PAY`, `code` defined) or define them again. Set a
    - Ownership: the same `/status` without the `X-Session-Id` header (or with another id) answers 200 with
      `"status": "done"` and `"r2_url": null`:
      `curl -s "$API/api/v1/status/<job_id>" | grep -o '"r2_url":[^,]*'`  (expected: `"r2_url":null`).
-   - Expiry: after 15 min the old URL answers a 4xx (expected 403, request expired), never the image; a new `/status` gives a working one. Known
-     UI gap until the UI follow-up (registers UI2): the result list and saved history reuse the URL from the last
-     poll, so a download clicked after 15 min fails; reload the page to fetch fresh links. Not a backend defect.
+   - Expiry: after 15 min the old URL (copied from devtools) answers a 4xx (expected 403, request expired), never the
+     image; a new `/status` gives a working one.
+
+   UI download behavior (imageopz-ui `main`, T-008c3: the UI never stores or reuses a link):
+   - Fresh link per click: each click on **Download** (result page) issues a new `GET /api/v1/status/<job_id>` in
+     devtools > Network and opens a new tab on the URL it returned; two clicks give two different `X-Amz-Signature`s.
+   - Ids-only history: devtools > Application > Local Storage > `imageopz_results_v1` holds job ids and file details,
+     no `r2.cloudflarestorage.com` URL.
+   - Expiry from both pages: wait more than 15 minutes after the job finished, then click **Download** on the result
+     page and **Download** on a file in **My Results**: both download the AVIF (a fresh link each time).
+   - Logout (known limitation, registers follow-up UI3): sign in, process an image, sign out, open My Results and click
+     Download. Expected: the message "This download is no longer available. Links expire, files are removed after their
+     expiry date, and files from another browser session cannot be downloaded here." and no tab left open (logout rotates
+     the session id and `/status` is called without the bearer token). Note it; it is not a Phase 8 failure.
+   - **Download all** in My Results with two or more files: note how many tabs open. Most browsers allow only the first
+     (known, registers follow-up UI4, later UX).
 2. **Anonymous, ~40 MB image: expected rejection.** The free tier limit is 10 MB (`free_tier_max_file_size`), so the
    UI or `/presign` must refuse it without spending a credit. A success here is a defect.
 3. **LemonSqueezy test-mode purchase**: sign in with a magic link (staging Supabase), buy Pro with the test card
@@ -615,7 +666,7 @@ Use the Phase 6 shell (`API`, `PAY`, `code` defined) or define them again. Set a
    Then LemonSqueezy > the webhook > resend the `order_created` delivery: the ingress answers 200 and the event is a
    `duplicate` (no second activation, no new payments task).
 4. **Pro, ~40 MB image** (and, for checklist item 10, if available, a ~50 MB / ~179 MP image): upload, DONE,
-   download. Measure:
+   download (signed in, same browser session: the UI proves ownership by session id, not by the account). Measure:
    ```sh
    gcloud logging read "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"imageopz-worker-staging\" AND httpRequest.requestUrl:\"/internal/jobs/process\" AND timestamp>=\"$T0\"" \
      --project="$PROJECT_ID" --format='table(timestamp,httpRequest.status,httpRequest.latency)'
@@ -632,36 +683,26 @@ Use the Phase 6 shell (`API`, `PAY`, `code` defined) or define them again. Set a
    echo "api $(code "$API/health")  payments $(code "$PAY/health")"     # expected: 404 404
    for q in imageopz-jobs-staging imageopz-payments-staging; do
      gcloud tasks queues describe "$q" --project="$PROJECT_ID" --location="$REGION" --format='value(state)'; done   # PAUSED PAUSED
+   ./deploy/gcloud/99-kill-switch.sh resume       # dry run: 2 ingress updates, 2 queue resumes, "left paused"
    DRY_RUN=0 ./deploy/gcloud/99-kill-switch.sh resume
    echo "api $(code "$API/health")  payments $(code "$PAY/health")"     # expected: 200 200 (allow ~1 min)
    ```
    Queues back to `RUNNING`; staging schedules stay `PAUSED` (resume prints "left paused"). The UI works again.
 
-**STOP 8** - paste: results of 1-6 (states, credits, status codes), the latency table, the memory/CPU peaks, any
-error lines.
+**STOP 8** - paste: results of 1-6 (states, credits, status codes), the UI download checks of 1 (both pages after
+15 min, logout message, Download all tab count), the latency table, the memory/CPU peaks, any error lines.
 
 ---
 
 ## Decisions (owner)
 
 ### D1 - How staging serves output images
-**Decided (owner, 2026-10-17): B, presigned GET, for staging and prod. Implemented in T-008c2.** Both outputs buckets
-stay private (no r2.dev, no custom domain); `GET /status` signs a 15-min GET (`R2_OUTPUT_URL_TTL_SECONDS`, default
-900) for the job's owner (the account, or the session id that uploaded it) while the job is DONE and not expired; the
-worker stores only `r2_object_key`. The api reads the outputs token (signing is local; it never calls the bucket).
-`R2_CUSTOM_DOMAIN` is gone from the scripts and env files. The analysis below is kept as written in T-008c0.
-
-At T-008c0 the worker stored `r2_url = R2_CUSTOM_DOMAIN + "/optimized/<job_id>.avif"` at processing time
-(`app/services/image_service.py`, returned by `/status`), so the outputs bucket must be publicly readable at a
-fixed base URL. The task premise is that DNS for `aindrajaya.my.id` is on Vercel; imageopz-ui's UI-ENVIRONMENTS.md
-(step 3) says the record is added in Cloudflare DNS. Check first: `dig +short NS aindrajaya.my.id`. If the nameservers
-are Cloudflare's and the zone is in the same account as R2, option C is just an R2 custom domain.
-
-| Option | What | For | Against |
-|---|---|---|---|
-| A. r2.dev public URL | Enable the bucket's public development URL; `R2_CUSTOM_DOMAIN=https://pub-<id>.r2.dev` | No code, no DNS, minutes to set up; staging only | Cloudflare positions r2.dev for non-production use (rate-limited, no cache or WAF); the whole bucket is public (keys are unguessable job UUIDs); does not answer prod, so prod needs B or C anyway; URLs are stored per job, so switching later leaves old rows pointing at r2.dev (staging, acceptable) |
-| B. Presigned GET | Bucket stays private; the API signs a short-lived GET when `/status` returns a DONE job | Same in staging and prod, no DNS dependency, no public bucket, revocable by expiry | Code change and tests (sign at read time instead of storing the URL; the worker would store only the key), UI must tolerate expiring links; a task before staging E2E |
-| C. Cloudflare-hosted zone + R2 custom domain | `files-staging.imageopz.<domain>` as an R2 custom domain (needs the zone on Cloudflare in the R2 account) | Production-grade (cache, WAF, no rate limit); same pattern for prod | If DNS is not on Cloudflare: moving the whole `aindrajaya.my.id` zone (affects Vercel records) or a delegated subdomain zone (plan availability unverified); more moving parts |
+**Decided (owner, 2026-10-17): presigned GET, for staging and prod. Implemented in T-008c2.** Both outputs buckets
+stay private (0.4); `GET /status` signs a 15-min GET (`R2_OUTPUT_URL_TTL_SECONDS`, default 900) for the job's owner
+(the account, or the session id that uploaded it) while the job is DONE and not expired; the worker stores only
+`r2_object_key`. The api reads the outputs token (signing is local; it never calls the bucket). Output serving needs
+no public bucket, no DNS record and no setting beyond the bucket name. The UI asks `/status` for a fresh link on every
+download click (T-008c3). The options weighed are in tasks/T-008c0-staging-runbook.md.
 
 ### D2 - Bootstrap fix scope (gap G1)
 Decided: T-008c1 as proposed (80 stage switch, `workflow_dispatch build_only`, `TRUSTED_PROXY_HOPS` parameter), plus
@@ -680,6 +721,8 @@ digest fallback in `60` and the executable bit.
 | G4 | `40` assumes the Cloud Tasks service agent exists | `40` may stop at its last binding on a fresh project | Report if it happens; the fix (service identity creation) belongs in `00`/`40` |
 | G5 | Checklist item 8's "duplicate delivery (503 then 200)" has no owner-runnable trigger | Not covered in Phase 8 | Covered by tests (J3); a staging check needs a scripted duplicate task (later task) |
 | G6 | Task spec says anonymous ~40 MB upload; the free limit is 10 MB | Phase 8 tests the rejection anonymously and the 40 MB path as Pro | None (runbook adjusted) |
+| G8 | `60-deploy-services.sh` writes `CORS_ALLOW_CREDENTIALS` as the literal `true` (found in T-DOCS-RB) | UI-ENVIRONMENTS step 7 (`false` once the header-only UI is live) cannot be done by config; a hand edit would be reverted by the next `60` | Script task: an env-file variable (default `true`), like `TRUSTED_PROXY_HOPS` |
+| G9 | `50-jobs.sh` requires `API_IMAGE` (T-008c1 F1); after 4.7 empties it, `50` stops with "API_IMAGE is required" | A later `50` run needs the digest set for that one command (4.7 says so) | Script task: same keep-the-running-image fallback as `60` |
 
 ## Risks staging verifies (from registers.md and DEPLOY-PLAN)
 
@@ -690,6 +733,7 @@ digest fallback in `60` and the executable bit.
 | Q10 | Org policy blocking `allUsers` | Phase 0.1 (`get-ancestors`), Phase 5.1 |
 | U2 / item 4 | Scheduler -> worker maintenance never observed | Phase 5.2 |
 | U3 / item 7 | R2 lifecycle and uploads CORS | Phase 0.4, 7.4, 8.1 |
+| U15 | One scoped R2 token per bucket per environment | Phase 0.4, 2.2 |
 | Item 5 | Migrations never ran on Supabase; RLS on every table; Data API exposes only `public` | Phase 4.6 |
 | Item 24 | Database secrets in bare `postgresql://` form; pooler ports | Phase 2.3 |
 | G1 (registers) | Pooler client limits (staging 15 of 200) | Phase 4.4 (`/ready` probes), Phase 8 (no connection errors) |
@@ -701,11 +745,13 @@ digest fallback in `60` and the executable bit.
 | Item 8 | End to end, test-mode order activates Pro once, replay is `duplicate` | Phase 8.1-8.5 |
 | Q8 | Kill switch works and is reversible | Phase 8.6 |
 | Item 17 | Alert policies exist (seeing each fire is a later check) | Phase 5.3 |
-| UI1 | `CORS_ALLOW_CREDENTIALS` must stay true until T-008b3 | Phase 7.2 (logout works in Phase 8) |
+| UI1 / G8 | `CORS_ALLOW_CREDENTIALS` stays true until `60` can set it (the UI no longer needs it) | Phase 7.2 (logout works in Phase 8) |
+| O1 / T-008c3 | Presigned downloads: fresh link per click, ids-only history, expiry, non-owner `null` | Phase 8.1 |
+| UI3, UI4 | Logout makes older history items undownloadable; Download all opens only the first file | Phase 8.1 (observed, known) |
 | U11 / J4 | Exception text in `error_message` reaches clients | Phase 8 (note any raw error text in the UI) |
 | S4 | OIDC certs fetched per call (latency on `/internal/*`) | Phase 8.4 latency table |
 | U1 | Presign abuse accepted with bounds | not tested (accepted risk) |
 | Supabase Free | Staging project pauses after 1 week idle (staging schedules are paused) | watch after bring-up; resume in the dashboard before tests |
 | Re-running `60` | Older digests in the env file roll services back | `60` keeps the running images when the digests are empty (4.7, 7.2) |
-| CI variables | Once set, every push to main deploys staging and requests prod approval | Phase 3.5 (no merges until 5.1b; reject prod until prod bring-up) |
+| CI variables | Once set, every push to main deploys staging and requests prod approval | Phase 3.2 before 3.5; no merges from 3.5 until 5.1b; reject prod until prod bring-up |
 | WIF `has(assertion.environment)` | Prod principalSet mapping | not validated in staging (prod job is rejected); first prod run |

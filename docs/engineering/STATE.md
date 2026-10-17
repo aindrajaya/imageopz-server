@@ -1,6 +1,6 @@
 ---
 project: imageopz-server
-updated: 2026-10-17 by Claude Code (T-008c2)
+updated: 2026-10-17 by Claude Code (T-DOCS-RB)
 ---
 
 # STATE - ImageOpz
@@ -10,9 +10,9 @@ Migrate ImageOpz to GCP Cloud Run + Supabase Postgres, with a Go payments ingres
 before applying to Sticker Mule on Mon 19 Oct 2026.
 
 ## Accepted baseline
-- `main` @ `09d4a66` (PR #22, T-008c1, squash). `alembic heads` = 0006. CI checks: `pytest (sqlite)`, `pytest (postgres)`, `image` (PR); `deploy` workflow dormant (no repository variables); payments-go workflow is path-filtered.
-- Branch `feat/presigned-downloads` (T-008c2, local commit on 09d4a66, worktree `imageopz-server-c2`): presigned output downloads, D1. Hand-off: tasks/T-008c2-presigned-downloads.md.
-- imageopz-ui `main` @ `3434424` (PR #6, T-008b3; seen in the local checkout, not re-verified on GitHub).
+- `main` @ `3fc950f` (PR #23, T-008c2, squash). `alembic heads` = 0006. CI checks: `pytest (sqlite)`, `pytest (postgres)`, `image` (PR); `deploy` workflow dormant (no repository variables); payments-go workflow is path-filtered.
+- Branch `docs/runbook-reconcile` (T-DOCS-RB, local docs commit on 3fc950f): STAGING-RUNBOOK reconciled with the merged scripts and the UI. Hand-off: tasks/T-DOCS-RB-runbook-reconcile.md.
+- imageopz-ui `main` @ `b86307e` (PR #7, T-008c3: fresh download links; T-008b3 #6 before it), local checkout.
 - Deployed: none; ImageOpz offline. No GCP resource exists. Migrations have never run against Supabase. Python Dockerfile exists (T-008b2) but has only been built in CI, not yet on a PR run.
 - Env: Python 3.11 venv `~/.venvs/imageopz`; no Docker; throwaway Postgres from Homebrew (runbooks/local-postgres.md).
 
@@ -40,6 +40,9 @@ before applying to Sticker Mule on Mon 19 Oct 2026.
 | T-008b2 /ready (Go), TRUSTED_PROXY_HOPS, Dockerfile, CI `image`, dormant deploy workflow, kill switch | #20 | fbe161a |
 | T-008c0 staging runbook (owner-executed), gaps G1-G6, output-serving decision D1 framed | #21 | 97add15 |
 | T-008c1 bootstrap fixes: `80` WIF stages, `build_only` dispatch, `60` digest fallback and `TRUSTED_PROXY_HOPS`, script modes | #22 | 09d4a66 |
+| T-008c2 presigned output downloads (D1), private outputs buckets, api holds the outputs token | #23 | 3fc950f |
+| T-008b3 header-only session mode, logout honors the cookie setting (imageopz-ui, UI1 UI side) | imageopz-ui #6 | 3434424 |
+| T-008c3 fresh download links per click, ids-only history (UI2), Supabase config screen, 404 give-up, Pro renew prompt (imageopz-ui) | imageopz-ui #7 | b86307e |
 
 ## Repo settings (verified 2026-10-15 via gh)
 - Both repos PUBLIC; secret scanning and push protection enabled on both.
@@ -75,16 +78,17 @@ Uploads use their own R2 token (no fallback to the outputs token).
 | Task | Scope | Status |
 |---|---|---|
 | T-DOCS-UI | Docs for imageopz-ui (other repo) | open |
-| T-008c2 | Presigned output downloads (D1): `/status` signs per request for the owner; worker stores only the key; api gets the outputs token and `R2_BUCKET_NAME`; `R2_CUSTOM_DOMAIN` removed | done, pending owner push/PR/merge |
-| T-008c | Staging bring-up by the owner following the runbook: phases 0-3 runnable now; phase 4+ after T-008c2 merges | next (owner) |
-| UI2 | imageopz-ui: refresh download links via `/status` before opening (links expire after 15 min) | open, before Phase 8 sign-off |
+| T-DOCS-RB | STAGING-RUNBOOK audit against main@3fc950f / UI main@b86307e; gaps G8, G9 | done, pending owner push/PR/merge |
+| T-008c | Staging bring-up by the owner following the runbook, Phase 0 first (after T-DOCS-RB merges) | next (owner) |
+| Script fixes | G8 (`CORS_ALLOW_CREDENTIALS` from the env file), G9 (`50` keeps the running image when `API_IMAGE` is unset) | open, before prod |
+| UI3 | imageopz-ui: send the Supabase bearer token on `/status` when signed in (downloads after logout) | open, before prod |
 | T-008b-rest | A1 (`EXPOSE_API_DOCS`), S4 (OIDC cert cache), SECRET_KEY scope, create_task timeout (item 19), B1 requirements split | open |
-| T-008b3 | imageopz-ui: `logoutSession` honors `VITE_IMAGEOPZ_SEND_COOKIES` (UI1); then `CORS_ALLOW_CREDENTIALS=false` | UI side merged (imageopz-ui #6, per local checkout); server CORS flip and registers UI1 not yet updated |
+| UI1 server side | `CORS_ALLOW_CREDENTIALS=false` per environment (UI side done, imageopz-ui #6) | blocked by G8 |
 | ADR-005 | Job processing via Cloud Tasks + 2026-10-17 amendment (maintenance endpoints) | proposed; owner review |
 
 ## Owner items
 - Discard up to three LemonSqueezy checkout objects created by T-006b test runs (registers.md "Incidents").
-- U15: one outputs token per environment (staging: only `imageopz-staging`; prod: only `imageopz`), revoke the account-wide one. The api now holds it too (T-008c2).
+- Cloudflare before runbook Phase 2 (STAGING-RUNBOOK 0.4): staging buckets private, uploads CORS and lifecycle, one scoped token per bucket per environment (U15: outputs staging only `imageopz-staging`, prod only `imageopz`; uploads likewise), then revoke the account-wide token.
 - Keep both outputs buckets private (r2.dev disabled, no custom domain; D1).
 - Wipe the Windows machine before any reuse. GitHub Support purge: pending confirmation.
 
@@ -93,13 +97,13 @@ Uploads use their own R2 token (no fallback to the outputs token).
 - Go ingress, Cloud Tasks (both enqueuers), Scheduler and OIDC never exercised against GCP; the Python image has never been built (first build is the `image` check on the T-008b2 PR).
 - T-008b1 ran one bare `alembic check` that read DATABASE_URL from `.env` (read-only; target unknown, likely local `imageopz.db`); owner to confirm.
 - U1 presign abuse accepted with cheap bounds (Q6). Worker max 1 instance: a Pro batch backlog delays other users.
-- Open follow-ups S1, S6, G1, S4, A1, U1-U5, U9-U11, U13, U15, J1, J2, J4-J8, O2, UI1, UI2 in registers.md.
-- Download links expire after 15 min; until UI2 the UI reuses the last polled link (a late click gets R2 403).
+- Open follow-ups S1, S6, G1, S4, A1, U1-U5, U9-U11, U13, U15, J1, J2, J4-J8, O2, UI1 (server side), UI3, UI4 in registers.md.
+- Download ownership is by session id in the UI: after logout older history items are not downloadable (UI3); Download all opens only the first file (UI4).
 - Never run install/dev/build/test on uninspected commits, or on UI commits before fd1032e; tests never load .env or reach external hosts (AGENTS.md).
 
 ## Standing authorization
 None. Each task grants its own; the owner commits and pushes.
 
 ## Next bounded step
-Owner reviews and merges T-008c2 (`feat/presigned-downloads`); runs runbook phases 0-3 (STOP after each), then 4-8
-with the D1 checks in Phase 8.1; UI2 in imageopz-ui before Phase 8 sign-off.
+Owner reviews and merges T-DOCS-RB (`docs/runbook-reconcile`), then starts STAGING-RUNBOOK Phase 0 (preflight, env
+file, budget check, Cloudflare R2 prerequisites 0.4), STOP after each phase. No merges to main from Phase 3.5 until 5.1b.
