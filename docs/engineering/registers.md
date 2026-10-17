@@ -24,6 +24,7 @@ Updated 2026-10-17 by Claude Code (task T-008b1).
 |---|---|---|
 | 2026-10-14 | VPS destroyed before a verified backup; the prod DB and `.env` were later recovered by the owner. | Before decommissioning a host, back up and verify a restore. Secrets live in Secret Manager, not host files. |
 | 2026-10-17 | T-008b1: a bare `alembic check` (no `-x url=`) resolved DATABASE_URL through app settings, which load the developer `.env`; the read-only check ran against an unknown database (most likely the local `imageopz.db`, "not up to date"). | Run Alembic only with `IMAGEOPZ_ENV_FILE=""` and `-x url=<throwaway db>` (rule in AGENTS.md). |
+| 2026-10-17 | uvicorn 0.30.6 with `--forwarded-allow-ips='*'` sets the client to the FIRST X-Forwarded-For entry, the one a client can forge (`ProxyHeadersMiddleware.get_trusted_client_host`). | Never run uvicorn with `*`; the app reads the header itself with `TRUSTED_PROXY_HOPS` (T-008b2). |
 | 2026-10-15 | fe7f405 carries an AI co-author trailer contrary to AGENTS.md; left in place (main history is protected). | Co-author attribution disabled in Claude Code settings. |
 
 ## Debt
@@ -49,7 +50,7 @@ Updated 2026-10-17 by Claude Code (task T-008b1).
 | S4 | Cache Google OIDC certs for internal auth (`app/utils/internal_auth.py` builds a fresh `google_requests.Request()` per call, fetching certs every time). Use a module-level Request with a cached session. | T-008 |
 | G1 | Go pool (8 conns) x Cloud Run instances must fit the Supabase pooler limit; set `--concurrency` and `--max-instances` accordingly. | T-008 |
 | U1 | Rate-limit `/uploads/presign` per IP (each new session id gets fresh free credits and object writes). Risk accepted for go-live (Risks, Q6). | backlog |
-| U2 | Schedule the sweep every 5 min and cleanup hourly: Cloud Scheduler -> worker `/internal/maintenance/{sweep,cleanup}` (Q1; endpoints done in T-008b1, scripts in T-008b2). | T-008b2 |
+| U2 | Schedule the sweep every 5 min and cleanup hourly: Cloud Scheduler -> worker `/internal/maintenance/{sweep,cleanup}` (Q1; endpoints T-008b1, `70-scheduler.sh` T-008b2). Open: observe 200 once per env (checklist item 4). | T-008c |
 | U3 | R2 lifecycle rule on `imageopz-uploads` (`uploads/` older than 1 day) as the backstop for best-effort deletes; owner verifies in Cloudflare. | T-008 |
 | U4 | Pillow's own limit (89.5 MP warning, 179 MP error) is below MAX_IMAGE_PIXELS (250 MP), so the effective limit is ~179 MP at `/complete` and in the worker (pre-existing). Decide and set `Image.MAX_IMAGE_PIXELS` deliberately. | backlog |
 | U5 | `/complete` reads 64 KiB (D3): a JPEG with >64 KiB of metadata before the frame header (e.g. a 200 KB ICC profile) is rejected `invalid_image`. Option: second ranged read up to 1 MiB. | T-006c feedback |
@@ -75,7 +76,10 @@ Updated 2026-10-17 by Claude Code (task T-008b1).
 | C1 | CLOSED 2026-10-17 (T-008b1): session cookie `Secure` in every ENVIRONMENT except development (`Settings.session_cookie_secure`); `tests/test_session_cookie_secure.py`. | - |
 | D1 | CLOSED 2026-10-17 (T-008b1): Scheduler -> worker `POST /internal/maintenance/{sweep,cleanup}` (Q1, ADR-005 amendment); `tests/test_maintenance_endpoints.py`. | - |
 | UI1 | imageopz-ui `logoutSession` (`lib/imageopzApi.ts`) always sends `credentials: "include"`, ignoring `VITE_IMAGEOPZ_SEND_COOKIES`; with `CORS_ALLOW_CREDENTIALS=false` the browser would block the logout response. Keep credentials on in CORS until fixed. | T-008b3 (UI) |
-| R1 | Cloud Run reserves "some paths ending with `z`" and recommends avoiding all of them (https://docs.cloud.google.com/run/docs/known-issues, "Reserved URL paths"). Python renamed `/readyz` to `/ready` (T-008b1 amendment). Open: the Go payments ingress still serves `/healthz` and `/readyz` (`services/payments-go/internal/httpapi/httpapi.go`, tests, `scripts/e2e-direct.sh`, README); rename to `/health` and `/ready` before its run.app smoke test. | T-008b2 |
+| R1 | CLOSED 2026-10-17 (T-008b2): Cloud Run reserves "some paths ending with `z`" (https://docs.cloud.google.com/run/docs/known-issues). Python serves `/ready` (T-008b1 amendment); the Go ingress now serves `/health` and `/ready` (`httpapi.go`, its test pins `/healthz` and `/readyz` as 404, `e2e-direct.sh`, README); probes in `60` use `/ready`. | - |
+| X1 | CLOSED 2026-10-17 (T-008b2): `IpFingerprint` took the first X-Forwarded-For entry (client-supplied, spoofable). Now `TRUSTED_PROXY_HOPS` (default 1) counts trusted entries from the right; `tests/test_client_ip.py`. Open check: the run.app header shape is undocumented; confirm from `xff_entries` in staging (DEPLOY-PLAN item 15). | owner + T-008c |
+| B1 | `requirements.txt` mixes runtime and test packages, so the image ships pytest and httpx. Split into runtime and dev files (exact pins kept) and install only runtime in the Dockerfile. | backlog |
+| B2 | T-008b2 checks not run locally: shellcheck and actionlint (Homebrew cannot install inside this agent environment) and `go test` (not authorized; the payments-go CI workflow runs it). Owner runs `brew install shellcheck actionlint`, then `shellcheck deploy/gcloud/*.sh` and `actionlint`. | owner |
 | U13 | A Pro renewal resets `pro_credits_used`; a reservation made before and released after decrements credits spent after the renewal (floor at 0 only). Decide with S6. | payments follow-up |
 
 ## Protected behaviors
@@ -93,6 +97,7 @@ Updated 2026-10-17 by Claude Code (task T-008b1).
 | `SERVICE_ROLE=api` never routes `/internal/*`; `worker` serves only `/internal/*` and health; unknown roles fail validation; committed `docs/openapi.json` matches the app | `tests/test_service_roles.py` |
 | Maintenance endpoints: 401 in every auth failure with no state change; 200 with counts; 503 generic; idempotent | `tests/test_maintenance_endpoints.py` |
 | Anonymous flow works with `X-Session-Id` and no cookie (Q2-B) | `tests/test_header_only_session.py` |
+| A client-supplied X-Forwarded-For prefix never changes the derived client IP (`TRUSTED_PROXY_HOPS`) | `tests/test_client_ip.py` |
 | Tests never load `.env` or reach external hosts | `tests/conftest.py` guard, `tests/test_network_guard.py` |
 
 ## T-008 checklist
