@@ -35,4 +35,8 @@ echo "ingress replay: $(deliver)"
 echo "api direct replay (bypassing the ingress dedupe): $(curl -s -X POST localhost:8765/internal/payments/events -H "X-Internal-Token: $INTERNAL" -H 'Content-Type: application/json' --data-binary "$BODY")"
 S2=$(state)
 echo "api me: $(curl -s localhost:8765/api/v1/session/me -H "X-Session-Id: $SID")"
-[ "$S1" = "$S2" ] && [[ "$S1" == 1\|1\|1\|true/* ]] && echo "E2E PASS: one activation, replay changed nothing" || { echo "E2E FAIL"; tail -20 "$TMP/api.log" "$TMP/ingress.log"; exit 1; }
+if [ "$S1" = "$S2" ] && [[ "$S1" == 1\|1\|1\|true/* ]]; then
+  echo "E2E PASS: one activation, replay changed nothing"
+else
+  echo "E2E FAIL"; tail -20 "$TMP/api.log" "$TMP/ingress.log"; exit 1
+fi

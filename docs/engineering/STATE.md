@@ -85,7 +85,6 @@ Uploads use their own R2 token (no fallback to the outputs token).
 ## Top risks / blockers
 - Rate limiting lost without Nginx (presign now included, U1); run.app X-Forwarded-For shape undocumented (TRUSTED_PROXY_HOPS=1 is spoof-safe; confirm in staging, X1); Supabase Free pauses after 1 week inactivity / 500 MB.
 - Go ingress, Cloud Tasks (both enqueuers), Scheduler and OIDC never exercised against GCP; the Python image has never been built (first build is the `image` check on the T-008b2 PR).
-- shellcheck/actionlint not yet run on T-008b2 (Homebrew blocked in the agent environment; registers B2).
 - T-008b1 ran one bare `alembic check` that read DATABASE_URL from `.env` (read-only; target unknown, likely local `imageopz.db`); owner to confirm.
 - U1 presign abuse accepted with cheap bounds (Q6). Worker max 1 instance: a Pro batch backlog delays other users.
 - Open follow-ups S1, S6, G1, S4, A1, U1-U5, U9-U11, U13, U15, J1, J2, J4-J8, UI1, R1 in registers.md.
@@ -95,4 +94,4 @@ Uploads use their own R2 token (no fallback to the outputs token).
 None. Each task grants its own; the owner commits and pushes.
 
 ## Next bounded step
-Owner runs shellcheck/actionlint, reviews T-008b2, pushes, opens the PR and merges after checks (incl. `image`); adds `image` to the ruleset; then T-008c (staging bring-up).
+Owner reviews T-008b2, pushes, opens the PR and merges after checks (incl. `image`); adds `image` to the ruleset; then T-008c (staging bring-up).

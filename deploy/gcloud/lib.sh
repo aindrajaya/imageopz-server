@@ -1,4 +1,5 @@
 # shellcheck shell=bash
+# shellcheck disable=SC2034  # variables are consumed by the scripts that source this file
 # Shared helpers for deploy/gcloud/NN-*.sh. Sourced, never executed.
 # Plan and naming: docs/engineering/deploy/DEPLOY-PLAN.md.
 #

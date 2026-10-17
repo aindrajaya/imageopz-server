@@ -114,7 +114,7 @@ deploy/gcloud/README.md "CI deploy".
 | Dry runs, staging and prod, every script incl. `99 stop`/`resume` and `ci-rollout.sh` | 28 runs, 186 gcloud commands printed, 0 failures; `99 bogus` rejected |
 | `set_paused` state logic (lib.sh sourced in a subshell, `gcloud` a stub function, no gcloud on PATH; no deploy script run) | 8 of 8 cases correct |
 | `gofmt -l` | clean; `go test` not run (not authorized), the payments-go CI workflow runs it |
-| shellcheck, actionlint | NOT RUN: `brew install` fails here (`sandbox-exec: sandbox_apply: Operation not permitted`, also with the agent sandbox off). Fallback: YAML parse of all 4 workflows OK. Owner: registers B2 |
+| shellcheck, actionlint | Tidy-up commit (owner-installed tools): `shellcheck -x -P deploy/gcloud deploy/gcloud/*.sh services/payments-go/scripts/*.sh` (0.11.0) clean, exit 0; `actionlint` (1.7.12) no output, exit 0. Changes for it: file-level SC2034 disable in `lib.sh`; `e2e-direct.sh` final check as if/then/else (same output and exit codes) |
 | Docker build | not run locally (no Docker, not allowed); the `image` workflow builds it on the PR |
 | Em-dashes, secret patterns in changed files | none |
 | Non-test diff (excluding this file) | +711 / -213: at the ~700-line gate (crossed only by the review fixes; deletions are mostly the removed sweep/cleanup jobs). Proposed split if the owner wants smaller PRs: PR A = commit 3faacc6 (app, image, CI, Go) + its review fixes, PR B = scripts 8f427df + kill-switch fixes, PR C = docs. The commits are already cut that way |

@@ -79,7 +79,7 @@ Updated 2026-10-17 by Claude Code (task T-008b1).
 | R1 | CLOSED 2026-10-17 (T-008b2): Cloud Run reserves "some paths ending with `z`" (https://docs.cloud.google.com/run/docs/known-issues). Python serves `/ready` (T-008b1 amendment); the Go ingress now serves `/health` and `/ready` (`httpapi.go`, its test pins `/healthz` and `/readyz` as 404, `e2e-direct.sh`, README); probes in `60` use `/ready`. | - |
 | X1 | CLOSED 2026-10-17 (T-008b2): `IpFingerprint` took the first X-Forwarded-For entry (client-supplied, spoofable). Now `TRUSTED_PROXY_HOPS` (default 1) counts trusted entries from the right; `tests/test_client_ip.py`. Open check: the run.app header shape is undocumented; confirm from `xff_entries` in staging (DEPLOY-PLAN item 15). | owner + T-008c |
 | B1 | `requirements.txt` mixes runtime and test packages, so the image ships pytest and httpx. Split into runtime and dev files (exact pins kept) and install only runtime in the Dockerfile. | backlog |
-| B2 | T-008b2 checks not run locally: shellcheck and actionlint (Homebrew cannot install inside this agent environment) and `go test` (not authorized; the payments-go CI workflow runs it). Owner runs `brew install shellcheck actionlint`, then `shellcheck deploy/gcloud/*.sh` and `actionlint`. | owner |
+| B2 | CLOSED 2026-10-17 (T-008b2 tidy-up): shellcheck 0.11.0 and actionlint 1.7.12 clean on all scripts and workflows. Still not run locally: `go test` (payments-go CI runs it) and the Docker build (the `image` check). | - |
 | U13 | A Pro renewal resets `pro_credits_used`; a reservation made before and released after decrements credits spent after the renewal (floor at 0 only). Decide with S6. | payments follow-up |
 
 ## Protected behaviors
