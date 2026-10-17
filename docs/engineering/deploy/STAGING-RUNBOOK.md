@@ -2,7 +2,7 @@
 
 Generated in T-008c0 from main@fbe161a: `deploy/gcloud/*`, `.github/workflows/deploy.yml`, `image.yml`, `Dockerfile`,
 [DEPLOY-PLAN.md](DEPLOY-PLAN.md), imageopz-ui `docs/engineering/deploy/UI-ENVIRONMENTS.md`. Phases 3-4 rewritten in
-T-008c1 (bootstrap fixes G1-G3). Nothing in this file has been run against GCP; every `DRY_RUN=1` command was run
+T-008c1 (bootstrap fixes G1-G3); output serving (D1, presigned GET) and Phase 8 expectations updated in T-008c2. Nothing in this file has been run against GCP; every `DRY_RUN=1` command was run
 locally (transcript excerpts in tasks/T-008c0-staging-runbook.md and tasks/T-008c1-bootstrap.md).
 
 How to use it
@@ -70,7 +70,6 @@ Fill in (all values are public or non-secret; never put a password, token, key o
 | `UI_ORIGINS` | keep `https://staging.imageopz.aindrajaya.my.id`; add `,http://localhost:3000` only if you want local UI against staging | 4 |
 | `R2_ACCOUNT_ID` | Cloudflare dashboard > R2 > Account ID | 4 |
 | `R2_BUCKET_NAME`, `R2_UPLOADS_BUCKET` | keep `imageopz-staging`, `imageopz-uploads-staging` | 4 |
-| `R2_CUSTOM_DOMAIN` | **pending decision D1** (section "Decisions"); public base URL of the staging outputs bucket, no trailing slash | 4 |
 | `SUPABASE_URL` | staging Supabase project > Project Settings > API > Project URL (`https://<staging-ref>.supabase.co`) | 4 |
 | `SUPABASE_ANON_KEY` | staging project anon / publishable key (public by design). Never the service-role key. | 4 |
 | `LEMONSQUEEZY_STORE_ID`, `LEMONSQUEEZY_VARIANT_ID` | LemonSqueezy in **test mode**: store id and the Pro variant id | 4 |
@@ -97,7 +96,8 @@ created in Phase 1.4 (before anything billable). Billing > Reports should show ~
 
 ### 0.4 Owner prerequisites outside GCP (check, do not create anything new in this phase)
 - Cloudflare R2: buckets `imageopz-staging` and `imageopz-uploads-staging` exist; uploads bucket CORS and the
-  `uploads/` 1-day lifecycle rule are set (README "Owner steps outside gcloud").
+  `uploads/` 1-day lifecycle rule are set (README "Owner steps outside gcloud"). Both buckets are private: no r2.dev
+  public URL, no custom domain (D1).
 - Supabase: the staging project exists (Q7), region ap-northeast-1, not paused.
 - LemonSqueezy: test mode available on the store.
 
@@ -192,7 +192,7 @@ Alternative for a value already in the clipboard: `pbpaste | tr -d '\n' | gcloud
 | `imageopz-database-url-staging` | Staging Supabase > Connect > **Transaction pooler** (port 6543). Form: `postgresql://postgres.<staging-ref>:<db-password>@<pooler-host>:6543/postgres?sslmode=require`. Bare `postgresql://` only (never `postgresql+psycopg://`: the Go ingress shares it and pgx rejects that scheme). User = `postgres.<ref>` (table owner). Unknown password: Project Settings > Database > reset. | `add_secret` |
 | `imageopz-database-url-session-staging` | Same project, **Session pooler** (port 5432), same user and password, same form ending `:5432/postgres?sslmode=require`. Used only by the migrate job. | `add_secret` |
 | `imageopz-secret-key-staging` | Generated, never seen: `openssl rand -hex 32 \| tr -d '\n' \| gcloud secrets versions add imageopz-secret-key-staging --project="$PROJECT_ID" --data-file=-` | generated |
-| `imageopz-r2-outputs-access-key-id-staging` / `...-secret-access-key-staging` | Cloudflare R2 > Manage API tokens > Create: Object Read & Write, **only** bucket `imageopz-staging`. Access Key ID and Secret Access Key are shown once. | `add_secret` x2 |
+| `imageopz-r2-outputs-access-key-id-staging` / `...-secret-access-key-staging` | Cloudflare R2 > Manage API tokens > Create: Object Read & Write, **only** bucket `imageopz-staging`. Access Key ID and Secret Access Key are shown once. Read by the worker (writes, cleanup) and the api (signs download URLs, D1). Never the account-wide token (U15). | `add_secret` x2 |
 | `imageopz-r2-uploads-access-key-id-staging` / `...-secret-access-key-staging` | A second token, Object Read & Write, **only** bucket `imageopz-uploads-staging`. | `add_secret` x2 |
 | `imageopz-lemonsqueezy-api-key-staging` | LemonSqueezy, **test mode on**: Settings > API > new key (a test-mode key). | `add_secret` |
 | `imageopz-lemonsqueezy-signing-secret-staging` | Generated here, entered in the LemonSqueezy webhook form in Phase 7: `openssl rand -hex 20 \| tr -d '\n' \| gcloud secrets versions add imageopz-lemonsqueezy-signing-secret-staging --project="$PROJECT_ID" --data-file=-` (40 hex chars; LemonSqueezy limits the signing-secret length, believed 40, check the form). | generated |
@@ -350,7 +350,8 @@ api and payments take no public traffic before `65` (Phase 5.1); the worker has 
 DRY_RUN=0 ./deploy/gcloud/60-deploy-services.sh
 ```
 Expected in the output: `# imageopz-<s>-staging: image from API_IMAGE` (worker, api) and `... from PAYMENTS_IMAGE`
-(payments); `TRUSTED_PROXY_HOPS: '1'` in the api block. Verify:
+(payments); `TRUSTED_PROXY_HOPS: '1'` and `R2_BUCKET_NAME: 'imageopz-staging'` in the api block (it signs download
+URLs, D1); no `R2_CUSTOM_DOMAIN` in any block. Verify:
 ```sh
 gcloud run services list --project="$PROJECT_ID" --region="$REGION" --filter='metadata.name~-staging$' \
   --format='table(metadata.name,status.conditions[0].status,metadata.annotations."run.googleapis.com/ingress")'
@@ -564,7 +565,9 @@ Authentication > URL Configuration: Site URL `https://staging.imageopz.aindrajay
 ### 7.4 R2
 - Uploads bucket `imageopz-uploads-staging`: CORS already set; confirm it lists `https://staging.imageopz.aindrajaya.my.id`
   (and `http://localhost:3000`), methods `PUT, GET`, header `content-type`, max-age 3600; lifecycle `uploads/` 1 day (U3).
-- Outputs bucket `imageopz-staging`: per decision D1.
+- Outputs bucket `imageopz-staging`: private (D1). Public development URL (r2.dev) disabled, no custom domain, no CORS
+  rule needed (the UI opens the presigned link in a new tab, a navigation, not a fetch). Check in the dashboard:
+  Settings > Public access shows the r2.dev URL disabled and no custom domain.
 
 ### 7.5 LemonSqueezy webhook (test mode)
 Settings > Webhooks (test mode) > add: URL `https://imageopz-payments-staging-<PROJECT_NUMBER>.asia-northeast1.run.app/webhooks/lemonsqueezy`;
@@ -586,7 +589,18 @@ Use the Phase 6 shell (`API`, `PAY`, `code` defined) or define them again. Set a
 `T0=$(date -u +%Y-%m-%dT%H:%M:%SZ)`.
 
 1. **Anonymous, small image** (< 1 MB JPEG/PNG) in a private window: presign, PUT to R2, complete, worker DONE,
-   download. Credits drop from 3 to 2 (`GET /api/v1/session/me` in the UI). The download URL must open (D1).
+   download. Credits drop from 3 to 2 (`GET /api/v1/session/me` in the UI). Download (D1, presigned GET):
+   - The download opens the AVIF. Its URL (browser devtools > Network, the `/api/v1/status/<job_id>` response,
+     `r2_url`) is on `https://<R2_ACCOUNT_ID>.r2.cloudflarestorage.com/imageopz-staging/optimized/<job_id>.avif`
+     with `X-Amz-Expires=900` and `X-Amz-Signature=...`; the `/status` response carries `Cache-Control: no-store`.
+   - Two `/status` calls return two different URLs (signed per request).
+   - The bucket is not public: the same URL with the query string removed answers 400 or 403, never the image.
+   - Ownership: the same `/status` without the `X-Session-Id` header (or with another id) answers 200 with
+     `"status": "done"` and `"r2_url": null`:
+     `curl -s "$API/api/v1/status/<job_id>" | grep -o '"r2_url":[^,]*'`  (expected: `"r2_url":null`).
+   - Expiry: after 15 min the old URL answers a 4xx (expected 403, request expired), never the image; a new `/status` gives a working one. Known
+     UI gap until the UI follow-up (registers UI2): the result list and saved history reuse the URL from the last
+     poll, so a download clicked after 15 min fails; reload the page to fetch fresh links. Not a backend defect.
 2. **Anonymous, ~40 MB image: expected rejection.** The free tier limit is 10 MB (`free_tier_max_file_size`), so the
    UI or `/presign` must refuse it without spending a credit. A success here is a defect.
 3. **LemonSqueezy test-mode purchase**: sign in with a magic link (staging Supabase), buy Pro with the test card
@@ -628,11 +642,17 @@ error lines.
 
 ---
 
-## Decisions (owner; not decided here)
+## Decisions (owner)
 
 ### D1 - How staging serves output images
-The worker stores `r2_url = R2_CUSTOM_DOMAIN + "/optimized/<job_id>.avif"` at processing time
-(`app/services/image_service.py`, returned by `/status`), so today the outputs bucket must be publicly readable at a
+**Decided (owner, 2026-10-17): B, presigned GET, for staging and prod. Implemented in T-008c2.** Both outputs buckets
+stay private (no r2.dev, no custom domain); `GET /status` signs a 15-min GET (`R2_OUTPUT_URL_TTL_SECONDS`, default
+900) for the job's owner (the account, or the session id that uploaded it) while the job is DONE and not expired; the
+worker stores only `r2_object_key`. The api reads the outputs token (signing is local; it never calls the bucket).
+`R2_CUSTOM_DOMAIN` is gone from the scripts and env files. The analysis below is kept as written in T-008c0.
+
+At T-008c0 the worker stored `r2_url = R2_CUSTOM_DOMAIN + "/optimized/<job_id>.avif"` at processing time
+(`app/services/image_service.py`, returned by `/status`), so the outputs bucket must be publicly readable at a
 fixed base URL. The task premise is that DNS for `aindrajaya.my.id` is on Vercel; imageopz-ui's UI-ENVIRONMENTS.md
 (step 3) says the record is added in Cloudflare DNS. Check first: `dig +short NS aindrajaya.my.id`. If the nameservers
 are Cloudflare's and the zone is in the same account as R2, option C is just an R2 custom domain.

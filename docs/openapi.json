@@ -130,7 +130,7 @@
           "optimization"
         ],
         "summary": "Get Job Status",
-        "description": "Poll job status and get optimization results.\nReturns current status, file sizes, compression ratio, and download URL.",
+        "description": "Poll job status and get optimization results.\nReturns current status, file sizes, compression ratio, and, for the job's owner (the account, or the session id\nthat uploaded it), a short-lived presigned download URL.",
         "operationId": "get_job_status_api_v1_status__job_id__get",
         "parameters": [
           {
@@ -140,6 +140,22 @@
             "schema": {
               "type": "string",
               "title": "Job Id"
+            }
+          },
+          {
+            "name": "X-Session-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Session-Id"
             }
           },
           {
@@ -938,7 +954,7 @@
               }
             ],
             "title": "R2 Url",
-            "description": "Cloudflare R2 download URL"
+            "description": "Short-lived presigned download URL (R2_OUTPUT_URL_TTL_SECONDS, default 900 s), fresh on every request; only for the job's owner while the job is done and not expired. Poll /status again for a new one."
           },
           "progress": {
             "anyOf": [

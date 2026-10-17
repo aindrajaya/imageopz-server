@@ -168,14 +168,14 @@ class JobWorker:
         # A job is never DONE without an uploaded result (U14); missing configuration is permanent.
         if not r2_storage:
             raise JobFailed("R2 upload failed: outputs storage not configured")
-        success, object_key, url_or_error = r2_storage.upload_optimized_image(optimized_data, job.original_filename, job.id)
+        success, object_key, error = r2_storage.upload_optimized_image(optimized_data, job.original_filename, job.id)
         if not success:
-            raise TransientJobError(f"R2 upload failed: {url_or_error}")
+            raise TransientJobError(f"R2 upload failed: {error}")
 
         return {
             "original_width": width,
             "original_height": height,
-            "r2_url": url_or_error,
+            # Only the key: /status signs a short-lived GET per request (T-008c2); r2_url stays null.
             "r2_object_key": object_key,
             "optimized_size": optimized_size,
             "compression_ratio": optimized_size / job.original_size,

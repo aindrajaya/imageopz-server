@@ -216,6 +216,8 @@ class Job(Base):
     compression_ratio = Column(Float, nullable=True)  # optimized_size / original_size
     
     # Storage
+    # Deprecated (T-008c2): no longer written; downloads are presigned per request from r2_object_key.
+    # Older rows may still hold a public URL; /status never returns it.
     r2_url = Column(String(512), nullable=True)
     r2_object_key = Column(String(255), nullable=True, unique=True)
 

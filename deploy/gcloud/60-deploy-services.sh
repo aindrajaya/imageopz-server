@@ -17,7 +17,7 @@
 #   [PAYMENTS_IMAGE=REGION-docker.pkg.dev/PROJECT/imageopz/payments-ingress@sha256:...] \
 #   [TRUSTED_PROXY_HOPS=1] \
 #   UI_ORIGINS=https://ui.example,https://www.ui.example \
-#   R2_ACCOUNT_ID=... R2_BUCKET_NAME=... R2_CUSTOM_DOMAIN=https://... R2_UPLOADS_BUCKET=... \
+#   R2_ACCOUNT_ID=... R2_BUCKET_NAME=... R2_UPLOADS_BUCKET=... \
 #   SUPABASE_URL=https://<ref>.supabase.co SUPABASE_ANON_KEY=<publishable key> \
 #   LEMONSQUEEZY_STORE_ID=... LEMONSQUEEZY_VARIANT_ID=... [LEMONSQUEEZY_REDIRECT_URL=...] \
 #   ./60-deploy-services.sh
@@ -25,7 +25,7 @@
 set -euo pipefail
 . "$(dirname "$0")/lib.sh"
 require_env_params
-for v in UI_ORIGINS R2_ACCOUNT_ID R2_BUCKET_NAME R2_CUSTOM_DOMAIN R2_UPLOADS_BUCKET \
+for v in UI_ORIGINS R2_ACCOUNT_ID R2_BUCKET_NAME R2_UPLOADS_BUCKET \
          SUPABASE_URL SUPABASE_ANON_KEY LEMONSQUEEZY_STORE_ID LEMONSQUEEZY_VARIANT_ID; do
   require_var "$v" "see deploy/gcloud/env.example"
 done
@@ -100,7 +100,6 @@ WORKER_ENV="$TMPDIR_ENV/worker.yaml"
   yaml_kv JOB_STALE_PENDING_SECONDS 3600
   yaml_kv R2_ACCOUNT_ID "$R2_ACCOUNT_ID"
   yaml_kv R2_BUCKET_NAME "$R2_BUCKET_NAME"
-  yaml_kv R2_CUSTOM_DOMAIN "$R2_CUSTOM_DOMAIN"
   yaml_kv R2_UPLOADS_BUCKET "$R2_UPLOADS_BUCKET"
 } > "$WORKER_ENV"
 show_env_file "$WORKER_ENV"
@@ -144,6 +143,9 @@ API_ENV="$TMPDIR_ENV/api.yaml"
   yaml_kv JOB_TASKS_SA_EMAIL "$INVOKER_EMAIL"
   yaml_kv JOB_TASKS_AUDIENCE "$WORKER_URL"
   yaml_kv R2_ACCOUNT_ID "$R2_ACCOUNT_ID"
+  # Outputs bucket is private: GET /status signs short-lived download URLs with the outputs token (T-008c2, D1;
+  # signing is local, the api never calls the bucket). No public outputs URL (R2_CUSTOM_DOMAIN removed).
+  yaml_kv R2_BUCKET_NAME "$R2_BUCKET_NAME"
   yaml_kv R2_UPLOADS_BUCKET "$R2_UPLOADS_BUCKET"
   yaml_kv SUPABASE_JWKS_URL "${SUPABASE_URL%/}/auth/v1/.well-known/jwks.json"
   yaml_kv SUPABASE_JWT_ISSUER "${SUPABASE_URL%/}/auth/v1"
@@ -168,7 +170,7 @@ run gcloud run deploy "$(svc_api)" --project="$PROJECT_ID" --region="$REGION" \
   --cpu=1 --memory=512Mi --timeout=60 --cpu-boost \
   --startup-probe="$STARTUP_PROBE" \
   --env-vars-file="$API_ENV" \
-  --set-secrets="DATABASE_URL=$(secret_name database-url):latest,SECRET_KEY=$(secret_name secret-key):latest,R2_UPLOADS_ACCESS_KEY_ID=$(secret_name r2-uploads-access-key-id):latest,R2_UPLOADS_SECRET_ACCESS_KEY=$(secret_name r2-uploads-secret-access-key):latest,LEMONSQUEEZY_SECRET=$(secret_name lemonsqueezy-signing-secret):latest,LEMONSQUEEZY_API_KEY=$(secret_name lemonsqueezy-api-key):latest" \
+  --set-secrets="DATABASE_URL=$(secret_name database-url):latest,SECRET_KEY=$(secret_name secret-key):latest,R2_ACCESS_KEY_ID=$(secret_name r2-outputs-access-key-id):latest,R2_SECRET_ACCESS_KEY=$(secret_name r2-outputs-secret-access-key):latest,R2_UPLOADS_ACCESS_KEY_ID=$(secret_name r2-uploads-access-key-id):latest,R2_UPLOADS_SECRET_ACCESS_KEY=$(secret_name r2-uploads-secret-access-key):latest,LEMONSQUEEZY_SECRET=$(secret_name lemonsqueezy-signing-secret):latest,LEMONSQUEEZY_API_KEY=$(secret_name lemonsqueezy-api-key):latest" \
   --labels="app=imageopz,env=${ENV},component=api"
 
 # --- payments: LemonSqueezy webhook ingress (Go), public ingress ----------------------------------------------------

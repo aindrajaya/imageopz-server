@@ -13,6 +13,7 @@ import httpx
 
 from app.models import (
     Job,
+    JobStatus,
     UsersQuota,
     User,
     Order,
@@ -41,6 +42,7 @@ from app.services.quota_context import (
 )
 from app.utils.supabase_auth import SupabaseIdentity
 from app.services.payments import apply_lemonsqueezy_body
+from app.services import image_service
 from app.config import settings
 
 router = APIRouter(prefix="/api/v1", tags=["optimization"])
@@ -242,6 +244,23 @@ async def create_lemonsqueezy_checkout(
 
 # ============= Status Polling Endpoint =============
 
+def _download_url(job: Job, owner: bool) -> Optional[str]:
+    """Presigned GET for a DONE, unexpired output, signed per request for its owner only (T-008c2, D1)."""
+    if not owner or job.status != JobStatus.DONE or not job.r2_object_key or job.deleted_at is not None:
+        return None
+    if not job.expiry_date or job.expiry_date <= datetime.utcnow():
+        return None
+    storage = image_service.r2_storage
+    if storage is None:
+        logger.error("Outputs storage not configured; job %s served without a download URL", job.id)
+        return None
+    try:
+        return storage.presign_get(job.r2_object_key, settings.r2_output_url_ttl_seconds)
+    except Exception:
+        logger.exception("Signing the download URL failed for job %s", job.id)
+        return None
+
+
 @router.get(
     "/status/{job_id}",
     response_model=JobStatusResponse,
@@ -252,12 +271,16 @@ async def create_lemonsqueezy_checkout(
 )
 async def get_job_status(
     job_id: str,
+    request: Request,
+    response: Response,
+    session_id_header: Optional[str] = Header(None, alias="X-Session-Id"),
     identity: Optional[SupabaseIdentity] = Depends(get_optional_supabase_identity),
     db_session: Session = Depends(get_db)
 ):
     """
     Poll job status and get optimization results.
-    Returns current status, file sizes, compression ratio, and download URL.
+    Returns current status, file sizes, compression ratio, and, for the job's owner (the account, or the session id
+    that uploaded it), a short-lived presigned download URL.
     """
     try:
         job = db_session.query(Job).filter_by(id=job_id).first()
@@ -276,7 +299,14 @@ async def get_job_status(
             quota = db_session.query(UsersQuota).filter_by(id=job.user_quota_id).first()
             if not quota or quota.user_id != user.id:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Job {job_id} not found")
-        
+            owner = True
+        else:
+            # Anonymous: the session id that presigned the upload (header first, like the other routes, then cookie).
+            sid = (session_id_header or request.cookies.get(settings.session_cookie_name) or "").strip()
+            owner = bool(sid) and sid == job.session_id
+
+        # The URL is a bearer credential for the file: never cache the response.
+        response.headers["Cache-Control"] = "no-store"
         return JobStatusResponse(
             job_id=job.id,
             status=job.status.value,
@@ -286,7 +316,7 @@ async def get_job_status(
             original_height=getattr(job, "original_height", None),
             optimized_size=job.optimized_size,
             compression_ratio=job.compression_ratio,
-            r2_url=job.r2_url,
+            r2_url=_download_url(job, owner),
             error_message=job.processing_error,
             rejection_reason=getattr(job, "rejection_reason", None),
             created_at=job.created_at,

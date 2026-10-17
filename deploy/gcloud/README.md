@@ -46,6 +46,7 @@ deploy of each job and service is the owner's (50, 60, 65); CI then only swaps i
 
 ## Owner steps outside gcloud (Cloudflare, Q4)
 - Create the staging buckets `imageopz-staging` (outputs) and `imageopz-uploads-staging` (uploads) in the R2 dashboard.
+  Keep both private (no r2.dev public URL, no custom domain): downloads are presigned GETs from `/status` (T-008c2, D1).
 - Create two R2 API tokens with Object Read & Write scoped to one staging bucket each; add the values to
   `imageopz-r2-outputs-*-staging` and `imageopz-r2-uploads-*-staging` (`gcloud secrets versions add ... --data-file=-`).
 - Uploads bucket CORS (staging origin and `http://localhost:3000`) and the `uploads/` 1-day lifecycle rule
