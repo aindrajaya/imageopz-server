@@ -115,7 +115,8 @@ def create_app() -> FastAPI:
             auth_token = auth.split(" ", 1)[1].strip() if auth_has_bearer and " " in auth else ""
             auth_is_jwt_like = auth_has_bearer and (auth_token.count(".") == 2)
             logger.info(
-                "HTTP %s %s origin=%s acr_method=%s acr_headers=%s x_session_id=%s cookie_present=%s auth_present=%s auth_jwt_like=%s",
+                "HTTP %s %s origin=%s acr_method=%s acr_headers=%s x_session_id=%s cookie_present=%s auth_present=%s auth_jwt_like=%s "
+                "xff_entries=%s",
                 request.method,
                 request.url.path,
                 request.headers.get("origin"),
@@ -125,6 +126,8 @@ def create_app() -> FastAPI:
                 bool(request.headers.get("cookie")),
                 bool(auth),
                 bool(auth_is_jwt_like),
+                # Entry count only, never addresses: shows the X-Forwarded-For shape behind Cloud Run (TRUSTED_PROXY_HOPS).
+                sum(len([e for e in v.split(",") if e.strip()]) for v in request.headers.getlist("x-forwarded-for")),
             )
         resp = await call_next(request)
         if should_log:

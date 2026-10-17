@@ -22,7 +22,7 @@ PIDS+=($!)
 PORT=8766 DATABASE_URL="postgres://postgres:dev@localhost:$PGPORT/$DB?sslmode=disable" LEMONSQUEEZY_SIGNING_SECRET="$WH_SECRET" \
   ENQUEUE_MODE=direct TASKS_TARGET_URL=http://localhost:8765 INTERNAL_SHARED_SECRET="$INTERNAL" "$TMP/ingress" >"$TMP/ingress.log" 2>&1 &
 PIDS+=($!)
-for _ in $(seq 60); do curl -s -o /dev/null localhost:8765/ && curl -sf localhost:8766/readyz >/dev/null && break; sleep 0.5; done
+for _ in $(seq 60); do curl -s -o /dev/null localhost:8765/ && curl -sf localhost:8766/ready >/dev/null && break; sleep 0.5; done
 
 BODY=$(printf '{"meta":{"event_name":"order_created","custom_data":{"session_id":"%s"}},"data":{"type":"orders","id":"%s","attributes":{"user_email":"e2e@example.com","total":1900}}}' "$SID" "$ORDER")
 SIG=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$WH_SECRET" -hex | sed 's/^.* //')

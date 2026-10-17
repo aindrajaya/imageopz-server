@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # deploy.yml runs the same suites before building (a push to main is not gated by the PR's checks alone).
+  workflow_call:
 
 jobs:
   pytest:

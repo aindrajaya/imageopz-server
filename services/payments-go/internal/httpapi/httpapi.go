@@ -45,12 +45,12 @@ type Handler struct {
 func (h *Handler) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /webhooks/lemonsqueezy", h.webhook)
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { write(w, 200, "status", "ok") })
-	mux.HandleFunc("GET /readyz", h.readyz)
+	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) { write(w, 200, "status", "ok") })
+	mux.HandleFunc("GET /ready", h.ready)
 	return mux
 }
 
-func (h *Handler) readyz(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) ready(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
 	if err := h.Store.Ping(ctx); err != nil {

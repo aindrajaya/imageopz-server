@@ -218,19 +218,23 @@ func TestHealthAndReady(t *testing.T) {
 		return w.Code
 	}
 	s.pingErr = errors.New("db down")
-	if get("/healthz") != 200 || s.begins != 0 {
-		t.Fatal("healthz must not touch the DB")
+	if get("/health") != 200 || s.begins != 0 {
+		t.Fatal("health must not touch the DB")
 	}
-	if get("/readyz") != 503 {
-		t.Fatal("readyz must fail when the DB is down")
+	if get("/ready") != 503 {
+		t.Fatal("ready must fail when the DB is down")
 	}
 	s.pingErr = nil
-	if get("/readyz") != 200 {
-		t.Fatal("readyz must pass when the DB is up")
+	if get("/ready") != 200 {
+		t.Fatal("ready must pass when the DB is up")
 	}
 	w := httptest.NewRecorder()
 	h.Routes().ServeHTTP(w, httptest.NewRequest("GET", "/webhooks/lemonsqueezy", nil))
 	if w.Code != 405 {
 		t.Fatalf("GET webhook: %d", w.Code)
+	}
+	// Cloud Run reserves some paths ending in "z" (known issues, "Reserved URL paths"): the old names stay unserved.
+	if get("/healthz") != 404 || get("/readyz") != 404 {
+		t.Fatal("healthz and readyz must not be served")
 	}
 }

@@ -325,13 +325,20 @@ class IpFingerprint:
     """Handles IP-based user identification for quota tracking"""
     
     @staticmethod
+    def client_ip(request) -> str:
+        """
+        Client IP behind TRUSTED_PROXY_HOPS proxies. Proxies append to X-Forwarded-For, so everything left of the
+        entries they added is client-supplied and never used: the client IP is the hops-th entry from the right
+        (the leftmost entry when there are fewer). No header, or hops = 0: the socket peer.
+        """
+        hops = settings.trusted_proxy_hops
+        entries = [e.strip() for line in request.headers.getlist("X-Forwarded-For") for e in line.split(",")]
+        entries = [e for e in entries if e]
+        if hops > 0 and entries:
+            return entries[-min(hops, len(entries))]
+        return request.client.host if request.client else "127.0.0.1"
+
+    @staticmethod
     def get_ip_hash(request) -> str:
         """Extract IP from request and create hash"""
-        # Check for X-Forwarded-For header (proxy/load balancer)
-        forwarded = request.headers.get("X-Forwarded-For")
-        if forwarded:
-            ip = forwarded.split(",")[0].strip()
-        else:
-            ip = request.client.host if request.client else "127.0.0.1"
-        
-        return QuotaManager.calculate_ip_hash(ip)
+        return QuotaManager.calculate_ip_hash(IpFingerprint.client_ip(request))

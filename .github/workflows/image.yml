@@ -1,0 +1,82 @@
+name: image
+
+# Builds the Python image (root Dockerfile: api, worker, migrate) without pushing, then smoke-tests the container.
+# Not path-filtered, so it can be a required check. Third-party actions are pinned to commit SHAs (T-008b2 hand-off).
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  image:
+    timeout-minutes: 20
+    runs-on: ubuntu-24.04
+    env:
+      IMAGE: imageopz-api:ci
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64
+          push: false
+          load: true
+          provenance: false
+          sbom: false
+          tags: ${{ env.IMAGE }}
+      - name: Image properties (non-root, no compilers, libmagic, alembic)
+        run: |
+          set -euo pipefail
+          docker image ls "$IMAGE"
+          uid="$(docker run --rm --entrypoint id "$IMAGE" -u)"
+          [ "$uid" != "0" ] || { echo "image runs as root"; exit 1; }
+          if docker run --rm --entrypoint sh "$IMAGE" -c 'command -v gcc || command -v cc || command -v g++'; then
+            echo "compiler present in the final stage"; exit 1
+          fi
+          docker run --rm --entrypoint python "$IMAGE" -c \
+            "import magic, sys; m = magic.from_buffer(b'\x89PNG\r\n\x1a\n' + b'\0' * 32, mime=True); print(m); sys.exit(m != 'image/png')"
+          docker run --rm --entrypoint alembic "$IMAGE" heads
+      - name: Refuses to start without SERVICE_ROLE
+        run: |
+          set +e
+          timeout 60 docker run --rm "$IMAGE"
+          rc=$?
+          set -e
+          [ "$rc" = "64" ] || { echo "expected exit 64, got $rc"; exit 1; }
+      - name: Smoke test (SERVICE_ROLE=api, dummy env)
+        run: |
+          set -euo pipefail
+          docker run -d --name api -p 8080:8080 \
+            -e SERVICE_ROLE=api -e PORT=8080 \
+            -e DATABASE_URL=sqlite:////tmp/ci.db -e SECRET_KEY=ci-dummy-not-a-secret \
+            "$IMAGE"
+          for _ in $(seq 60); do
+            [ "$(curl -s -o /dev/null -w '%{http_code}' localhost:8080/health)" = "200" ] && break
+            sleep 1
+          done
+          docker logs api
+          test "$(curl -s -o /dev/null -w '%{http_code}' localhost:8080/health)" = "200"
+          test "$(curl -s -o /dev/null -w '%{http_code}' localhost:8080/ready)" = "200"
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST localhost:8080/internal/jobs/process)" = "404"
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST localhost:8080/internal/maintenance/sweep)" = "404"
+      - name: Smoke test (SERVICE_ROLE=worker mounts /internal and refuses unauthenticated calls)
+        run: |
+          set -euo pipefail
+          docker run -d --name worker -p 8081:8080 \
+            -e SERVICE_ROLE=worker -e PORT=8080 \
+            -e DATABASE_URL=sqlite:////tmp/ci.db -e SECRET_KEY=ci-dummy-not-a-secret \
+            "$IMAGE"
+          for _ in $(seq 60); do
+            [ "$(curl -s -o /dev/null -w '%{http_code}' localhost:8081/health)" = "200" ] && break
+            sleep 1
+          done
+          docker logs worker
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST localhost:8081/internal/jobs/process)" = "401"
+          test "$(curl -s -o /dev/null -w '%{http_code}' localhost:8081/api/v1/session/me)" = "404"
+      - name: Container logs on failure
+        if: failure()
+        run: docker logs api || true; docker logs worker || true
