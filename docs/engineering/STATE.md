@@ -1,6 +1,6 @@
 ---
 project: imageopz-server
-updated: 2026-10-17 by Claude Code (T-008b2)
+updated: 2026-10-17 by Claude Code (T-008c0)
 ---
 
 # STATE - ImageOpz
@@ -10,8 +10,8 @@ Migrate ImageOpz to GCP Cloud Run + Supabase Postgres, with a Go payments ingres
 before applying to Sticker Mule on Mon 19 Oct 2026.
 
 ## Accepted baseline
-- `main` @ `3cd8057` (PR #19, T-008b1, squash). At T-008b2 reconcile: SQLite 171 passed/13 skipped; Postgres 16.15 184 passed; `alembic heads` = 0006. CI checks: `pytest (sqlite)`, `pytest (postgres)`; payments-go workflow is path-filtered.
-- Branch `feat/delivery` (T-008b2, local commits, not pushed): SQLite 181 passed/13 skipped; Postgres 16.15 194 passed. Adds the `image` PR check and a dormant `deploy` workflow. Hand-off: tasks/T-008b2-delivery.md.
+- `main` @ `fbe161a` (PR #20, T-008b2, squash). `alembic heads` = 0006. CI checks: `pytest (sqlite)`, `pytest (postgres)`, `image` (PR); `deploy` workflow dormant (no repository variables); payments-go workflow is path-filtered.
+- Branch `docs/staging-runbook` (T-008c0, one local commit, docs only): deploy/STAGING-RUNBOOK.md. Hand-off: tasks/T-008c0-staging-runbook.md.
 - imageopz-ui `main` @ `f6f19ce` (PR #5, T-006d).
 - Deployed: none; ImageOpz offline. No GCP resource exists. Migrations have never run against Supabase. Python Dockerfile exists (T-008b2) but has only been built in CI, not yet on a PR run.
 - Env: Python 3.11 venv `~/.venvs/imageopz`; no Docker; throwaway Postgres from Homebrew (runbooks/local-postgres.md).
@@ -37,6 +37,7 @@ before applying to Sticker Mule on Mon 19 Oct 2026.
 | T-006d upload UX before go-live (imageopz-ui) | imageopz-ui #5 | f6f19ce |
 | T-008a deploy plan and dry-run gcloud scripts | #18 | acd7b82 |
 | T-008b1 route roles, maintenance endpoints, H1, C1, header-only sessions, /ready | #19 | 3cd8057 |
+| T-008b2 /ready (Go), TRUSTED_PROXY_HOPS, Dockerfile, CI `image`, dormant deploy workflow, kill switch | #20 | fbe161a |
 
 ## Repo settings (verified 2026-10-15 via gh)
 - Both repos PUBLIC; secret scanning and push protection enabled on both.
@@ -71,8 +72,9 @@ Uploads use their own R2 token (no fallback to the outputs token).
 | Task | Scope | Status |
 |---|---|---|
 | T-DOCS-UI | Docs for imageopz-ui (other repo) | open |
-| T-008b2 | /ready (Go), TRUSTED_PROXY_HOPS, Dockerfile, CI `image`, dormant deploy workflow, scripts synced with section 0, kill switch (tasks/T-008b2-delivery.md) | done, pending owner push/PR/merge |
-| T-008c | Staging bring-up: scripts with DRY_RUN=0, repo variables (deploy dormant until then), first deploy, XFF shape (item 15), IAM edge for `jobs execute --wait` | next |
+| T-008c0 | Staging runbook (deploy/STAGING-RUNBOOK.md), gaps G1-G6, decision D1 (output serving) | done, pending owner push/PR/merge |
+| T-008c1 | Bootstrap fix (runbook G1/G2): `80-wif.sh` `WIF_STAGE=registry\|all`, `deploy.yml` `workflow_dispatch` `build_only`, `TRUSTED_PROXY_HOPS` parameter in `60` | proposed |
+| T-008c | Staging bring-up by the owner following the runbook: phases 0-3 runnable now; phase 4+ after T-008c1 and D1 | next (owner) |
 | T-008b-rest | A1 (`EXPOSE_API_DOCS`), S4 (OIDC cert cache), SECRET_KEY scope, create_task timeout (item 19), B1 requirements split | open |
 | T-008b3 | imageopz-ui: `logoutSession` honors `VITE_IMAGEOPZ_SEND_COOKIES` (UI1); then `CORS_ALLOW_CREDENTIALS=false` | open |
 | ADR-005 | Job processing via Cloud Tasks + 2026-10-17 amendment (maintenance endpoints) | proposed; owner review |
@@ -94,4 +96,5 @@ Uploads use their own R2 token (no fallback to the outputs token).
 None. Each task grants its own; the owner commits and pushes.
 
 ## Next bounded step
-Owner reviews T-008b2, pushes, opens the PR and merges after checks (incl. `image`); adds `image` to the ruleset; then T-008c (staging bring-up).
+Owner reviews T-008c0, pushes and merges; runs runbook phases 0-3 with a STOP after each; decides D1 (staging output
+serving) and T-008c1 scope (D2); then T-008c1, then phases 4-8.
