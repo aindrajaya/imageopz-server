@@ -38,7 +38,7 @@ review (docs/engineering/deploy/STAGING-RUNBOOK.md, STOP 0 to STOP 8).
 AI-assisted delivery: the Go code, and the Python changes in these tasks, were written by AI coding agents (Claude
 Code) from task contracts the owner wrote. The owner set the requirements and the ADR decisions, reviewed every hand-off, ran CI, and operated
 the GCP bring-up. The owner is not a fluent Go developer; the Go code is the agents' work, checked against the
-owner's contracts and tests.
+owner's contracts and tests. The owner wrote the original FastAPI service before these tasks, using AI to help work through problems.
 
 ## 3. Decisions
 
