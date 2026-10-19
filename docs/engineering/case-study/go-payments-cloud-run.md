@@ -103,7 +103,7 @@ sequenceDiagram
   participant W as Python worker
   LS->>G: POST /webhooks/lemonsqueezy (raw body, X-Signature)
   G->>G: HMAC-SHA256 over raw bytes (401 if wrong)
-  G->>DB: BEGIN; INSERT webhook_deliveries ON CONFLICT DO NOTHING
+  G->>DB: BEGIN, then INSERT webhook_deliveries ON CONFLICT DO NOTHING
   alt row exists
     G-->>LS: 200 duplicate
   else new row

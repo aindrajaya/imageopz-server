@@ -15,7 +15,7 @@ sequenceDiagram
     LS->>G: POST /webhooks/lemonsqueezy (raw body + X-Signature)
     G->>G: HMAC-SHA256 over raw bytes (401 on failure)
     G->>G: dedupe key (lemonsqueezy, event, type, id) or 200 ignored
-    G->>DB: BEGIN; INSERT ... ON CONFLICT DO NOTHING RETURNING
+    G->>DB: BEGIN, then INSERT ... ON CONFLICT DO NOTHING RETURNING
     alt no row returned
         G-->>LS: 200 duplicate
     else row inserted
@@ -28,7 +28,7 @@ sequenceDiagram
             G-->>LS: 200 accepted
         end
     end
-    Q->>API: POST original body (OIDC token); API is idempotent per order
+    Q->>API: POST original body (OIDC token), API is idempotent per order
 ```
 
 A commit failure after a successful enqueue answers 503; the sender's retry enqueues again (Cloud Tasks
